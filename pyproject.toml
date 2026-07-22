@@ -6,10 +6,10 @@ authors = [
     {name = "Jonathan Stoff",email = "jonathanlstoff@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.14.2"
 dependencies = [
-    "homeassistant (>=2026.7.3,<2027.0.0)",
-    "voluptuous (>=0.16.0,<0.17.0)"
+    "homeassistant (>=2026.6.3)",
+    "voluptuous (>=0.14.0)"
 ]
 
 [dependency-groups]
