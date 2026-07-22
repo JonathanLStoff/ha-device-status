@@ -37,8 +37,14 @@ jobs:
             echo "Integration folder '$INTEGRATION_FOLDER' not found!"
             exit 1
           fi
-          cd custom_components
-          zip -r ../ha_device_status.zip ha_device_status/
+
+          zip -r ha_device_status.zip README.md hacs.json custom_components/ha_device_status/
+
+          if ! unzip -l ha_device_status.zip | grep -q 'custom_components/ha_device_status/manifest.json'; then
+            echo "Archive does not contain custom_components/ha_device_status/manifest.json"
+            exit 1
+          fi
+
           echo "Created ha_device_status.zip"
 
       - name: Create GitHub release and upload asset
