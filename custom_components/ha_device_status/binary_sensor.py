@@ -98,7 +98,14 @@ async def _async_ping(
 
 
 def _start_cron_polling(hass: HomeAssistant, cron_expr: str, sensors: list):
-    """Poll `sensors` on a cron schedule. Returns a callable that cancels it."""
+    """Poll `sensors` on a cron schedule. Returns a callable that cancels it.
+
+    The very first update is left to `update_before_add=True` on
+    `async_add_entities`, which Home Assistant already runs in proper
+    sequence with attaching the entity. Firing an extra update here too
+    raced against that attachment (entity had no `hass`/`entity_id` yet),
+    producing "Attribute hass is None" / "No entity id specified" errors.
+    """
     state = {"cancelled": False, "unsub": None}
 
     async def update_sensors(now=None):
@@ -120,7 +127,6 @@ def _start_cron_polling(hass: HomeAssistant, cron_expr: str, sensors: list):
         if state["unsub"]:
             state["unsub"]()
 
-    hass.async_create_task(update_sensors())
     schedule_next()
     return cancel
 
