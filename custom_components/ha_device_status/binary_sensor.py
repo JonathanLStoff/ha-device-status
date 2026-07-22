@@ -277,7 +277,15 @@ class NetworkMonitorSensor(BinarySensorEntity):
         """Set state and notify on transitions."""
         old_state = self._state
         self._state = new_state
-        self.async_write_ha_state()
+
+        # update_before_add=True runs async_update() before the entity has
+        # an entity_id (that's assigned afterwards via the entity registry),
+        # so writing state here would fail. Home Assistant writes that first
+        # state itself once the entity is actually registered; we only need
+        # to write it ourselves for every update after that, since should_poll
+        # is False and nothing else will.
+        if self.entity_id is not None:
+            self.async_write_ha_state()
 
         if old_state is None or old_state == new_state:
             return
