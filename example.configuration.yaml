@@ -1,4 +1,8 @@
-# Example configuration.yaml entry
+# Example configuration.yaml entry.
+# For most setups, adding devices through Settings > Devices & Services > Add
+# Integration is easier — each run of the flow adds one device with its own
+# notify routing and schedule. YAML is mainly useful for bulk setup and for
+# the global "wireguard" interface below, which isn't tied to one device.
 ha_device_status:
   # Optional: have the integration bring up a WireGuard interface itself so
   # ping checks can reach devices on the other end of the tunnel. Requires

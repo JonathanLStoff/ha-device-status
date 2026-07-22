@@ -1,0 +1,71 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a monitored device",
+        "description": "Give this device a name and pick how it should be checked. You'll set notifications and the check schedule next.",
+        "data": {
+          "name": "Name",
+          "type": "Check type"
+        }
+      },
+      "ping": {
+        "title": "Ping settings",
+        "data": {
+          "ip": "IP address or hostname",
+          "interface": "Network interface (e.g. wg0 to ping over a WireGuard tunnel)",
+          "count": "Ping attempts",
+          "timeout": "Timeout per attempt (seconds)"
+        }
+      },
+      "port": {
+        "title": "Port settings",
+        "data": {
+          "ip": "IP address or hostname",
+          "port": "TCP port",
+          "timeout": "Timeout (seconds)"
+        }
+      },
+      "mqtt": {
+        "title": "MQTT settings",
+        "data": {
+          "topic": "MQTT topic",
+          "payload": "Expected \"online\" payload"
+        }
+      },
+      "notify": {
+        "title": "Notifications & schedule",
+        "description": "Choose which notify services (e.g. your phone's companion app) should be alerted, and how often this device is checked.",
+        "data": {
+          "notify_services": "Notify services",
+          "notify_offline": "Notify when this device goes offline",
+          "notify_online": "Also notify when it comes back online",
+          "cron": "Check schedule (cron expression)"
+        }
+      }
+    },
+    "error": {
+      "invalid_cron": "That's not a valid cron expression."
+    },
+    "abort": {
+      "already_configured": "A device with this name is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Notifications & schedule",
+        "description": "Change which notify services are used and how often this device is checked.",
+        "data": {
+          "notify_services": "Notify services",
+          "notify_offline": "Notify when this device goes offline",
+          "notify_online": "Also notify when it comes back online",
+          "cron": "Check schedule (cron expression)"
+        }
+      }
+    },
+    "error": {
+      "invalid_cron": "That's not a valid cron expression."
+    }
+  }
+}

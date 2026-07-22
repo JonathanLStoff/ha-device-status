@@ -22,7 +22,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return True
 
     domain_config = config[DOMAIN]
-    hass.data[DOMAIN] = domain_config
+    hass.data.setdefault(DOMAIN, {})["yaml"] = domain_config
 
     wg_config = domain_config.get(CONF_WIREGUARD)
     if wg_config:
@@ -48,5 +48,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up from a config entry (unused)."""
+    """Set up a single monitored device added via the UI."""
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a device's config entry."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload a device's config entry when its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)

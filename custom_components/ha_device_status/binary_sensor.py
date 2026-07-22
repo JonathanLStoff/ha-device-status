@@ -13,6 +13,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.components.mqtt import async_subscribe
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time
@@ -78,17 +79,45 @@ async def _async_ping(
     return proc.returncode == 0
 
 
+def _start_cron_polling(hass: HomeAssistant, cron_expr: str, sensors: list):
+    """Poll `sensors` on a cron schedule. Returns a callable that cancels it."""
+    state = {"cancelled": False, "unsub": None}
+
+    async def update_sensors(now=None):
+        await asyncio.gather(*(sensor.async_update() for sensor in sensors))
+
+    def schedule_next():
+        if state["cancelled"]:
+            return
+        next_time = croniter(cron_expr, dt_util.now()).get_next(datetime)
+        state["unsub"] = async_track_point_in_time(hass, run_and_reschedule, next_time)
+
+    async def run_and_reschedule(now):
+        await update_sensors()
+        schedule_next()
+
+    @callback
+    def cancel():
+        state["cancelled"] = True
+        if state["unsub"]:
+            state["unsub"]()
+
+    hass.async_create_task(update_sensors())
+    schedule_next()
+    return cancel
+
+
 async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
     async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up the network monitor binary sensors."""
-    if DOMAIN not in hass.data:
+    """Set up network monitor binary sensors configured via YAML."""
+    domain_config = hass.data.get(DOMAIN, {}).get("yaml")
+    if not domain_config:
         return
 
-    domain_config = hass.data[DOMAIN]
     items = domain_config.get(CONF_ITEMS, [])
     notify_names = domain_config.get(CONF_NOTIFY, [])
     notify_services = domain_config.get(CONF_NOTIFY_SERVICES, [])
@@ -115,34 +144,52 @@ async def async_setup_platform(
 
     async_add_entities(sensors, update_before_add=True)
 
-    polling_sensors = [
-        s for s in sensors if isinstance(s, (PingSensor, PortSensor))
-    ]
+    polling_sensors = [s for s in sensors if isinstance(s, (PingSensor, PortSensor))]
+    if polling_sensors:
+        _start_cron_polling(hass, cron_expr, polling_sensors)
 
-    async def update_polling_sensors(now=None):
-        await asyncio.gather(
-            *(sensor.async_update() for sensor in polling_sensors)
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the binary sensor for a single device added via the UI."""
+    item = dict(entry.data)
+    options = entry.options
+    notify_offline = options.get(CONF_NOTIFY, True)
+    notify_services = options.get(CONF_NOTIFY_SERVICES, [])
+    notify_online = options.get(CONF_NOTIFY_ONLINE, False)
+    cron_expr = options.get(CONF_CRON, DEFAULT_CRON)
+
+    unique_id = f"network_monitor_entry_{entry.entry_id}"
+    item_type = item[CONF_TYPE]
+    if item_type == "ping":
+        sensor = PingSensor(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
+        )
+    elif item_type == "port":
+        sensor = PortSensor(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
+        )
+    else:
+        sensor = MqttSensor(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
         )
 
-    def schedule_next(now=None):
-        """Schedule the next poll based on the cron expression."""
-        base = dt_util.now()
-        next_time = croniter(cron_expr, base).get_next(datetime)
-        async_track_point_in_time(hass, run_and_reschedule, next_time)
+    async_add_entities([sensor], update_before_add=True)
 
-    async def run_and_reschedule(now):
-        await update_polling_sensors()
-        schedule_next()
-
-    # Run once immediately, then follow the cron schedule.
-    await update_polling_sensors()
-    schedule_next()
+    if isinstance(sensor, (PingSensor, PortSensor)):
+        cancel = _start_cron_polling(hass, cron_expr, [sensor])
+        entry.async_on_unload(cancel)
 
 
 class NetworkMonitorSensor(BinarySensorEntity):
     """Base class for network monitor sensors."""
 
-    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
+    def __init__(
+        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+    ):
         self.hass = hass
         self._item = item
         self._name = item[CONF_NAME]
@@ -151,7 +198,7 @@ class NetworkMonitorSensor(BinarySensorEntity):
         self._notify_online = notify_online
         self._state = None
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-        self._attr_unique_id = f"network_monitor_{self._name}"
+        self._attr_unique_id = unique_id or f"network_monitor_{self._name}"
 
     @property
     def name(self):
@@ -226,8 +273,12 @@ class NetworkMonitorSensor(BinarySensorEntity):
 class PingSensor(NetworkMonitorSensor):
     """Ping an IP address, optionally over a specific interface (e.g. WireGuard)."""
 
-    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
-        super().__init__(hass, item, notify_offline, notify_services, notify_online)
+    def __init__(
+        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+    ):
+        super().__init__(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
+        )
         self._ip = item[CONF_IP]
         self._interface = item.get(CONF_INTERFACE)
         self._count = item.get(CONF_COUNT, DEFAULT_COUNT)
@@ -247,8 +298,12 @@ class PingSensor(NetworkMonitorSensor):
 class PortSensor(NetworkMonitorSensor):
     """Check if a TCP port is open."""
 
-    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
-        super().__init__(hass, item, notify_offline, notify_services, notify_online)
+    def __init__(
+        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+    ):
+        super().__init__(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
+        )
         self._ip = item[CONF_IP]
         self._port = item[CONF_PORT]
         self._timeout = item.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
@@ -271,8 +326,12 @@ class PortSensor(NetworkMonitorSensor):
 class MqttSensor(NetworkMonitorSensor):
     """Subscribe to an MQTT topic and set state based on payload."""
 
-    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
-        super().__init__(hass, item, notify_offline, notify_services, notify_online)
+    def __init__(
+        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+    ):
+        super().__init__(
+            hass, item, notify_offline, notify_services, notify_online, unique_id
+        )
         self._topic = item[CONF_TOPIC]
         self._expected_payload = item.get(CONF_PAYLOAD, DEFAULT_PAYLOAD)
         self._unsubscribe = None

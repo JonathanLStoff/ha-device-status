@@ -7,7 +7,7 @@ Home Assistant integration that monitors devices by checking ping reachability, 
 
 ## What it does
 
-This integration creates binary sensor entities for devices you want to monitor. Each item can be configured as one of the following:
+This integration creates one binary sensor per device you want to monitor. Each device can be checked one of these ways:
 
 - Ping an IP address (optionally over a specific interface, such as a WireGuard tunnel)
 - Check whether a TCP port is open
@@ -15,13 +15,13 @@ This integration creates binary sensor entities for devices you want to monitor.
 
 It can also bring up a WireGuard interface itself, so you don't have to configure the tunnel outside of Home Assistant first.
 
-When a monitored item goes offline it can:
+When a monitored device goes offline it can:
 
 - Create a persistent notification in Home Assistant
-- Push a notification to your phone(s) via the Home Assistant companion app
+- Push a notification to specific `notify.*` services (e.g. your phone's companion app) — chosen per device
 - Optionally push a follow-up when the device recovers
 
-How often ping/port devices are checked is controlled by a **cron expression**.
+How often each device is checked is controlled by a **cron expression**, set per device.
 
 ## Installation
 
@@ -37,9 +37,21 @@ Then open HACS, go to Integrations, and search for "ha-device-status".
 
 Copy the folder [custom_components/ha_device_status](custom_components/ha_device_status) into your Home Assistant configuration's custom_components directory.
 
-## Configuration
+## Configuration via the UI (recommended)
 
-Add a configuration block like the one in [example.configuration.yaml](example.configuration.yaml) to your Home Assistant configuration.
+After installing, go to **Settings → Devices & Services → Add Integration**, search for "Device Status", and add it. Each time you run through the flow you add **one device**:
+
+1. **Name & check type** — pick `ping`, `port`, or `mqtt`.
+2. **Connection details** — IP/hostname and port, MQTT topic/payload, or ping options (`interface` for routing over a WireGuard tunnel, attempt count, timeout).
+3. **Notifications & schedule** — pick which `notify.*` services (e.g. your phone's Home Assistant companion app) should be alerted for *this device*, whether to also notify on recovery, and the cron schedule for how often it's checked.
+
+Repeat "Add Integration" for each additional device — every device is its own entry with its own notification routing and schedule. To change a device's notify services or schedule later, click **Configure** on that entry in Devices & Services.
+
+To route notifications to a phone, install the [Home Assistant companion app](https://www.home-assistant.io/companion-app/) on it first — its `notify.mobile_app_<device>` service will then show up as an option in the flow.
+
+## Configuration via YAML (advanced / bulk setup)
+
+YAML configuration still works and is useful for defining many devices at once, or for the global `wireguard` interface setup below (which isn't tied to any single device). Add a block like the one in [example.configuration.yaml](example.configuration.yaml) to your Home Assistant configuration.
 
 Example:
 
@@ -84,7 +96,7 @@ ha_device_status:
     - "Web Server"
 ```
 
-### Options
+### YAML options
 
 | Key | Scope | Description |
 | --- | --- | --- |
