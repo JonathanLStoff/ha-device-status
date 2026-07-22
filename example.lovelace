@@ -1,0 +1,11 @@
+type: entities
+entities:
+  - entity: binary_sensor.router
+    name: Router
+  - entity: binary_sensor.web_server
+    name: Web Server
+  - entity: binary_sensor.mqtt_device
+    name: MQTT Device
+  - entity: binary_sensor.docker_registry
+    name: Docker Registry
+title: Network Status

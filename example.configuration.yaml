@@ -1,0 +1,25 @@
+# Example configuration.yaml entry
+ha_device_status:
+  items:
+    - name: "Router"
+      type: ping
+      ip: 192.168.1.1
+
+    - name: "Web Server"
+      type: port
+      ip: 192.168.1.10
+      port: 80
+
+    - name: "MQTT Device"
+      type: mqtt
+      topic: "home/device/status"
+      payload: "online"   # optional, defaults to "online"
+
+    - name: "Docker Registry"
+      type: port
+      ip: 192.168.1.20
+      port: 5000
+
+  notify_offline:
+    - "Router"
+    - "Web Server"

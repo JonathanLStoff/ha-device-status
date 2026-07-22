@@ -1,0 +1,10 @@
+DOMAIN = "ha_device_status"
+CONF_ITEMS = "items"
+CONF_NOTIFY = "notify_offline"
+CONF_NAME = "name"
+CONF_TYPE = "type"
+CONF_IP = "ip"
+CONF_PORT = "port"
+CONF_TOPIC = "topic"
+CONF_PAYLOAD = "payload"  # optional expected payload for MQTT
+DEFAULT_PAYLOAD = "online"
