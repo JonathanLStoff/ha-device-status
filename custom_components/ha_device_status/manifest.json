@@ -1,11 +1,12 @@
 {
   "domain": "ha_device_status",
   "name": "Device Status",
-  "version": "1.0.0",
+  "version": "0.1.2",
   "documentation": "https://github.com/JonathanLStoff/ha-device-status/blob/main/README.md",
   "requirements": [],
   "dependencies": ["mqtt"],
   "codeowners": ["@JonathanLStoff"],
+  "issue_tracker": "https://github.com/JonathanLStoff/ha-device-status/issues",
   "config_flow": false,
   "iot_class": "local_polling"
 }

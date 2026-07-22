@@ -32,16 +32,14 @@ jobs:
       - name: Create integration package (zip)
         shell: bash
         run: |
-          # Adjust the folder name if your integration is named differently
-          INTEGRATION_FOLDER="custom_components/network_monitor"
+          INTEGRATION_FOLDER="custom_components/ha_device_status"
           if [ ! -d "$INTEGRATION_FOLDER" ]; then
             echo "Integration folder '$INTEGRATION_FOLDER' not found!"
             exit 1
           fi
-          # Zip the integration folder so the archive root contains the folder
           cd custom_components
-          zip -r ../network_monitor.zip network_monitor/
-          echo "Created network_monitor.zip"
+          zip -r ../ha_device_status.zip ha_device_status/
+          echo "Created ha_device_status.zip"
 
       - name: Create GitHub release and upload asset
         uses: softprops/action-gh-release@v2
@@ -50,6 +48,6 @@ jobs:
           name: Release ${{ steps.version.outputs.version }}
           generate_release_notes: true
           files: |
-            network_monitor.zip
+            ha_device_status.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
