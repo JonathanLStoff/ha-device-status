@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m py_compile custom_components/ha_device_status/binary_sensor.py custom_components/ha_device_status/const.py custom_components/ha_device_status/__init__.py)",
+      "Bash(python3 -c \"import json; json.load\\(open\\('custom_components/ha_device_status/manifest.json'\\)\\); print\\('manifest OK'\\)\")"
+    ]
+  }
+}

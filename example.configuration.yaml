@@ -1,9 +1,29 @@
 # Example configuration.yaml entry
 ha_device_status:
+  # How often to check ping/port devices, as a cron expression.
+  # Default: "*/1 * * * *" (every minute).
+  cron: "*/5 * * * *"
+
+  # Home Assistant companion-app notify services (one per phone).
+  # Find yours under Developer Tools > Actions as "notify.mobile_app_<device>".
+  notify_services:
+    - mobile_app_johns_iphone
+    - mobile_app_janes_pixel
+
+  # Also push a notification when a device recovers (comes back online).
+  notify_online: true
+
   items:
     - name: "Router"
       type: ping
       ip: 192.168.1.1
+
+    - name: "Remote NAS"          # reachable only over the WireGuard tunnel
+      type: ping
+      ip: 10.0.0.5
+      interface: wg0              # send the ping out the WireGuard interface
+      count: 3                     # optional, default 2
+      timeout: 5                   # optional, per-attempt seconds, default 3
 
     - name: "Web Server"
       type: port
@@ -13,13 +33,15 @@ ha_device_status:
     - name: "MQTT Device"
       type: mqtt
       topic: "home/device/status"
-      payload: "online"   # optional, defaults to "online"
+      payload: "online"           # optional, defaults to "online"
 
     - name: "Docker Registry"
       type: port
       ip: 192.168.1.20
       port: 5000
 
+  # Which items should trigger a notification when they go offline.
   notify_offline:
     - "Router"
+    - "Remote NAS"
     - "Web Server"

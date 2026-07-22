@@ -3,34 +3,44 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import async_timeout
+from croniter import croniter
+from homeassistant.components import persistent_notification
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.components.mqtt import async_subscribe
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-from homeassistant.helpers.network import async_ping
-from homeassistant.components.mqtt import async_subscribe
+import homeassistant.util.dt as dt_util
 import voluptuous as vol
 
 from .const import (
-    DOMAIN,
-    CONF_ITEMS,
-    CONF_NOTIFY,
-    CONF_NAME,
-    CONF_TYPE,
+    CONF_COUNT,
+    CONF_CRON,
+    CONF_INTERFACE,
     CONF_IP,
-    CONF_PORT,
-    CONF_TOPIC,
+    CONF_ITEMS,
+    CONF_NAME,
+    CONF_NOTIFY,
+    CONF_NOTIFY_ONLINE,
+    CONF_NOTIFY_SERVICES,
     CONF_PAYLOAD,
+    CONF_PORT,
+    CONF_TIMEOUT,
+    CONF_TOPIC,
+    CONF_TYPE,
+    DEFAULT_COUNT,
+    DEFAULT_CRON,
     DEFAULT_PAYLOAD,
+    DEFAULT_TIMEOUT,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,23 +53,74 @@ ITEM_SCHEMA = vol.Schema(
         vol.Optional(CONF_PORT): cv.port,
         vol.Optional(CONF_TOPIC): cv.string,
         vol.Optional(CONF_PAYLOAD, default=DEFAULT_PAYLOAD): cv.string,
+        vol.Optional(CONF_INTERFACE): cv.string,
+        vol.Optional(CONF_COUNT, default=DEFAULT_COUNT): cv.positive_int,
+        vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
     },
     extra=vol.ALLOW_EXTRA,
 )
+
+
+def _validate_cron(value: str) -> str:
+    """Validate that a string is a parseable cron expression."""
+    value = cv.string(value)
+    if not croniter.is_valid(value):
+        raise vol.Invalid(f"Invalid cron expression: {value}")
+    return value
+
 
 CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
                 vol.Required(CONF_ITEMS): vol.All(cv.ensure_list, [ITEM_SCHEMA]),
-                vol.Optional(CONF_NOTIFY, default=[]): vol.All(cv.ensure_list, [cv.string]),
+                vol.Optional(CONF_NOTIFY, default=[]): vol.All(
+                    cv.ensure_list, [cv.string]
+                ),
+                vol.Optional(CONF_NOTIFY_SERVICES, default=[]): vol.All(
+                    cv.ensure_list, [cv.string]
+                ),
+                vol.Optional(CONF_NOTIFY_ONLINE, default=False): cv.boolean,
+                vol.Optional(CONF_CRON, default=DEFAULT_CRON): _validate_cron,
             }
         )
     },
     extra=vol.ALLOW_EXTRA,
 )
 
-SCAN_INTERVAL = timedelta(seconds=60)  # polling interval for ping/port
+
+async def _async_ping(
+    ip: str, count: int, timeout: int, interface: str | None = None
+) -> bool:
+    """Ping a host with the system ping binary, optionally via an interface.
+
+    Binding to an interface (e.g. ``wg0``) forces the ICMP packets out a
+    specific route such as a WireGuard tunnel.
+    """
+    cmd = ["ping", "-n", "-q", "-c", str(count), "-W", str(timeout)]
+    if interface:
+        cmd += ["-I", interface]
+    cmd.append(ip)
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as err:
+        _LOGGER.error("Failed to run ping for %s: %s", ip, err)
+        return False
+
+    try:
+        # Give ping enough time for all attempts plus a small buffer.
+        async with async_timeout.timeout(count * timeout + 5):
+            await proc.communicate()
+    except asyncio.TimeoutError:
+        proc.kill()
+        return False
+
+    return proc.returncode == 0
 
 
 async def async_setup_platform(
@@ -75,41 +136,65 @@ async def async_setup_platform(
     domain_config = hass.data[DOMAIN]
     items = domain_config.get(CONF_ITEMS, [])
     notify_names = domain_config.get(CONF_NOTIFY, [])
+    notify_services = domain_config.get(CONF_NOTIFY_SERVICES, [])
+    notify_online = domain_config.get(CONF_NOTIFY_ONLINE, False)
+    cron_expr = domain_config.get(CONF_CRON, DEFAULT_CRON)
 
-    sensors = []
+    sensors: list[NetworkMonitorSensor] = []
     for item in items:
         name = item[CONF_NAME]
         item_type = item[CONF_TYPE]
+        notify_offline = name in notify_names
         if item_type == "ping":
-            sensors.append(PingSensor(hass, item, name in notify_names))
+            sensors.append(
+                PingSensor(hass, item, notify_offline, notify_services, notify_online)
+            )
         elif item_type == "port":
-            sensors.append(PortSensor(hass, item, name in notify_names))
+            sensors.append(
+                PortSensor(hass, item, notify_offline, notify_services, notify_online)
+            )
         elif item_type == "mqtt":
-            sensors.append(MqttSensor(hass, item, name in notify_names))
+            sensors.append(
+                MqttSensor(hass, item, notify_offline, notify_services, notify_online)
+            )
 
     async_add_entities(sensors, update_before_add=True)
 
-    # Start periodic updates for ping and port sensors
-    async def update_polling_sensors(now=None):
-        for sensor in sensors:
-            if isinstance(sensor, (PingSensor, PortSensor)):
-                await sensor.async_update()
+    polling_sensors = [
+        s for s in sensors if isinstance(s, (PingSensor, PortSensor))
+    ]
 
-    async_track_time_interval(hass, update_polling_sensors, SCAN_INTERVAL)
-    # Run once immediately
+    async def update_polling_sensors(now=None):
+        await asyncio.gather(
+            *(sensor.async_update() for sensor in polling_sensors)
+        )
+
+    def schedule_next(now=None):
+        """Schedule the next poll based on the cron expression."""
+        base = dt_util.now()
+        next_time = croniter(cron_expr, base).get_next(datetime)
+        async_track_point_in_time(hass, run_and_reschedule, next_time)
+
+    async def run_and_reschedule(now):
+        await update_polling_sensors()
+        schedule_next()
+
+    # Run once immediately, then follow the cron schedule.
     await update_polling_sensors()
+    schedule_next()
 
 
 class NetworkMonitorSensor(BinarySensorEntity):
     """Base class for network monitor sensors."""
 
-    def __init__(self, hass, item, notify_offline):
+    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
         self.hass = hass
         self._item = item
         self._name = item[CONF_NAME]
         self._notify_offline = notify_offline
+        self._notify_services = notify_services
+        self._notify_online = notify_online
         self._state = None
-        self._was_online = None  # for triggering notifications
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_unique_id = f"network_monitor_{self._name}"
 
@@ -123,45 +208,83 @@ class NetworkMonitorSensor(BinarySensorEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"type": self._item[CONF_TYPE]}
+        attrs = {"type": self._item[CONF_TYPE]}
+        if CONF_INTERFACE in self._item:
+            attrs["interface"] = self._item[CONF_INTERFACE]
+        return attrs
 
     async def async_update(self):
         """Polling update – to be overridden."""
-        pass
 
     async def _set_state(self, new_state):
-        """Set state and notify if offline transition."""
+        """Set state and notify on transitions."""
         old_state = self._state
         self._state = new_state
         self.async_write_ha_state()
 
-        # Trigger notification on online -> offline transition
-        if self._notify_offline and old_state is True and new_state is False:
-            await self._notify_offline_event()
+        if old_state is None or old_state == new_state:
+            return
 
-    async def _notify_offline_event(self):
-        """Send a persistent notification."""
-        self.hass.components.persistent_notification.async_create(
-            f"Network monitor: {self._name} went offline!",
-            title="Device Offline",
-            notification_id=f"network_monitor_{self._name}_offline",
-        )
-        # You can also call a notify service, e.g.:
-        # await self.hass.services.async_call("notify", "mobile_app", {"message": f"{self._name} is offline!"})
+        # online -> offline
+        if old_state is True and new_state is False:
+            await self._notify(
+                f"{self._name} went offline!",
+                title="Device Offline",
+                notification_id=f"network_monitor_{self._name}_offline",
+                send=self._notify_offline,
+            )
+        # offline -> online
+        elif old_state is False and new_state is True:
+            await self._notify(
+                f"{self._name} is back online.",
+                title="Device Online",
+                notification_id=f"network_monitor_{self._name}_offline",
+                send=self._notify_offline and self._notify_online,
+                dismiss=True,
+            )
+
+    async def _notify(self, message, title, notification_id, send, dismiss=False):
+        """Send/clear a persistent notification and push to phones."""
+        if dismiss:
+            persistent_notification.async_dismiss(self.hass, notification_id)
+        else:
+            persistent_notification.async_create(
+                self.hass, message, title=title, notification_id=notification_id
+            )
+
+        if not send:
+            return
+
+        # Push to the Home Assistant companion app on each configured phone.
+        for service in self._notify_services:
+            try:
+                await self.hass.services.async_call(
+                    "notify",
+                    service,
+                    {"title": title, "message": message},
+                    blocking=False,
+                )
+            except Exception as err:  # noqa: BLE001 - never let a bad service break polling
+                _LOGGER.error("Failed to notify via notify.%s: %s", service, err)
 
 
 class PingSensor(NetworkMonitorSensor):
-    """Ping an IP address."""
+    """Ping an IP address, optionally over a specific interface (e.g. WireGuard)."""
 
-    def __init__(self, hass, item, notify_offline):
-        super().__init__(hass, item, notify_offline)
+    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
+        super().__init__(hass, item, notify_offline, notify_services, notify_online)
         self._ip = item[CONF_IP]
+        self._interface = item.get(CONF_INTERFACE)
+        self._count = item.get(CONF_COUNT, DEFAULT_COUNT)
+        self._timeout = item.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
 
     async def async_update(self):
         try:
-            success = await async_ping(self.hass, self._ip, count=2, timeout=3)
+            success = await _async_ping(
+                self._ip, self._count, self._timeout, self._interface
+            )
             await self._set_state(success)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             _LOGGER.error("Ping error for %s: %s", self._name, e)
             await self._set_state(False)
 
@@ -169,21 +292,22 @@ class PingSensor(NetworkMonitorSensor):
 class PortSensor(NetworkMonitorSensor):
     """Check if a TCP port is open."""
 
-    def __init__(self, hass, item, notify_offline):
-        super().__init__(hass, item, notify_offline)
+    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
+        super().__init__(hass, item, notify_offline, notify_services, notify_online)
         self._ip = item[CONF_IP]
         self._port = item[CONF_PORT]
+        self._timeout = item.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
 
     async def async_update(self):
         try:
-            async with async_timeout.timeout(5):
+            async with async_timeout.timeout(self._timeout):
                 reader, writer = await asyncio.open_connection(self._ip, self._port)
                 writer.close()
                 await writer.wait_closed()
                 online = True
         except (asyncio.TimeoutError, OSError, ConnectionRefusedError):
             online = False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             _LOGGER.error("Port check error for %s: %s", self._name, e)
             online = False
         await self._set_state(online)
@@ -192,8 +316,8 @@ class PortSensor(NetworkMonitorSensor):
 class MqttSensor(NetworkMonitorSensor):
     """Subscribe to an MQTT topic and set state based on payload."""
 
-    def __init__(self, hass, item, notify_offline):
-        super().__init__(hass, item, notify_offline)
+    def __init__(self, hass, item, notify_offline, notify_services, notify_online):
+        super().__init__(hass, item, notify_offline, notify_services, notify_online)
         self._topic = item[CONF_TOPIC]
         self._expected_payload = item.get(CONF_PAYLOAD, DEFAULT_PAYLOAD)
         self._unsubscribe = None
@@ -205,11 +329,9 @@ class MqttSensor(NetworkMonitorSensor):
         @callback
         def message_received(msg):
             """Handle incoming MQTT message."""
-            payload = msg.payload
-            is_online = payload == self._expected_payload
+            is_online = msg.payload == self._expected_payload
             self.hass.async_create_task(self._set_state(is_online))
 
-        # Subscribe to MQTT topic
         self._unsubscribe = await async_subscribe(
             self.hass, self._topic, message_received, 0, "utf-8"
         )
