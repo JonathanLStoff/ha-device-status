@@ -37,7 +37,7 @@
         "title": "WireGuard interface",
         "description": "Either point at an existing wg-quick config file, or fill in the keys/peer below to build one. Requires wireguard-tools and NET_ADMIN on the Home Assistant host.",
         "data": {
-          "config_path": "Existing wg-quick config file path",
+          "config_path": "Existing wg-quick config file path (relative paths resolve against the Home Assistant config directory)",
           "interface": "Interface name (derived from the config file name if left blank)",
           "address": "Address (e.g. 10.10.0.2/24)",
           "private_key": "Private key",
@@ -87,7 +87,7 @@
         "title": "WireGuard interface",
         "description": "Editing this reconnects the tunnel with the new details.",
         "data": {
-          "config_path": "Existing wg-quick config file path",
+          "config_path": "Existing wg-quick config file path (relative paths resolve against the Home Assistant config directory)",
           "interface": "Interface name (derived from the config file name if left blank)",
           "address": "Address (e.g. 10.10.0.2/24)",
           "private_key": "Private key",

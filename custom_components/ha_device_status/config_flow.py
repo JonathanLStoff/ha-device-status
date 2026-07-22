@@ -379,6 +379,14 @@ class WireguardOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        # async_step_init is the mandatory entry point for an options flow,
+        # but the form below is shown with step_id="wireguard" - resubmitting
+        # it gets routed to async_step_wireguard, not back to this method.
+        return await self.async_step_wireguard(user_input)
+
+    async def async_step_wireguard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
         current = self.config_entry.data
 

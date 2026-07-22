@@ -90,6 +90,10 @@ async def async_setup_wireguard(
         return True, False
 
     config_path = wg_config.get(CONF_WG_CONFIG_PATH)
+    if config_path and not os.path.isabs(config_path):
+        # Relative paths resolve against the Home Assistant config
+        # directory (e.g. "wireguard/wg0.conf" -> "/config/wireguard/wg0.conf").
+        config_path = hass.config.path(config_path)
     tmp_dir = None
 
     if not config_path:

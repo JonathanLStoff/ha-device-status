@@ -57,7 +57,7 @@ To route notifications to a phone, install the [Home Assistant companion app](ht
 
 Add a device with type `wireguard` to have the integration bring up the tunnel itself, either:
 
-- **From an existing config**: set "Existing wg-quick config file path" to a `wg-quick`-style `.conf` file. The interface name is derived from the filename (e.g. `wg0.conf` → `wg0`) unless you set one explicitly.
+- **From an existing config**: set "Existing wg-quick config file path" to a `wg-quick`-style `.conf` file. Either an absolute path (e.g. `/etc/wireguard/wg0.conf`) or a path relative to your Home Assistant config directory (e.g. `wireguard/wg0.conf`, resolving to `/config/wireguard/wg0.conf`) works. The interface name is derived from the filename (e.g. `wg0.conf` → `wg0`) unless you set one explicitly.
 - **Inline**: leave the config path blank and fill in interface, address, private key, and the peer's public key + allowed IPs (endpoint, keepalive, and preshared key are optional). This models a single-peer client setup — the common case of connecting out to one VPN server.
 
 This requires `wireguard-tools` (`wg`, `wg-quick`) and `NET_ADMIN` capability on the Home Assistant host/container. If the interface already exists (managed some other way), the integration leaves it alone and won't tear it down; if it brought the interface up itself, it tears it down when that entry is removed or Home Assistant stops.
@@ -126,7 +126,7 @@ ha_device_status:
 
 **Notifying phones:** each phone with the Home Assistant companion app exposes a `notify.mobile_app_<device>` service. List those service names (without the `notify.` prefix) under `notify_services`, and list which devices should trigger alerts under `notify_offline`.
 
-**WireGuard tunnel:** the `wireguard` block will bring the interface up for you at startup, either from inline keys/peers or from an existing wg-quick config file (`config_path`). When using `config_path`, `interface` can be omitted — it's derived from the filename the same way `wg-quick` does (e.g. `wg0.conf` → interface `wg0`); set `interface` explicitly if you want to override that. This requires:
+**WireGuard tunnel:** the `wireguard` block will bring the interface up for you at startup, either from inline keys/peers or from an existing wg-quick config file (`config_path`). `config_path` accepts either an absolute path or one relative to your Home Assistant config directory (e.g. `wireguard/wg0.conf` resolves to `/config/wireguard/wg0.conf`). When using `config_path`, `interface` can be omitted — it's derived from the filename the same way `wg-quick` does (e.g. `wg0.conf` → interface `wg0`); set `interface` explicitly if you want to override that. This requires:
 
 - `wireguard-tools` (`wg`, `wg-quick`) installed on the Home Assistant host/container
 - `NET_ADMIN` capability available to that host/container
