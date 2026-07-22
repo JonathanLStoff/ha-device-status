@@ -1,7 +1,7 @@
 {
   "domain": "ha_device_status",
   "name": "Device Status",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "documentation": "https://github.com/JonathanLStoff/ha-device-status",
   "requirements": [],
   "dependencies": ["mqtt"],
