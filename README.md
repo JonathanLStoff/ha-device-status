@@ -27,7 +27,7 @@ Then open HACS, go to Integrations, and search for "ha-device-status".
 
 ### Manual installation
 
-Copy the folder [custom_components/ha-device-status](custom_components/ha-device-status) into your Home Assistant configuration's custom_components directory.
+Copy the folder [custom_components/ha_device_status](custom_components/ha_device_status) into your Home Assistant configuration's custom_components directory.
 
 ## Configuration
 
