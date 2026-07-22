@@ -1,5 +1,28 @@
 # Example configuration.yaml entry
 ha_device_status:
+  # Optional: have the integration bring up a WireGuard interface itself so
+  # ping checks can reach devices on the other end of the tunnel. Requires
+  # `wireguard-tools` on the host and NET_ADMIN capability. If the interface
+  # is already up (e.g. managed elsewhere), it's left alone.
+  wireguard:
+    # Point at an existing wg-quick config file. "interface" is derived from
+    # the filename (e.g. "wg0.conf" -> interface "wg0"), just like wg-quick
+    # itself does — no need to repeat it.
+    config_path: /config/wireguard/wg0.conf
+
+    # Alternatively, build the config inline instead of using config_path
+    # above. In that case "interface" is required:
+    # interface: wg0
+    # address: 10.10.0.2/24
+    # private_key: !secret wg_private_key
+    # listen_port: 51820          # optional
+    # dns: 1.1.1.1                 # optional
+    # peers:
+    #   - public_key: "SERVER_PUBLIC_KEY"
+    #     endpoint: "vpn.example.com:51820"
+    #     allowed_ips: "10.10.0.0/24"
+    #     persistent_keepalive: 25  # optional
+
   # How often to check ping/port devices, as a cron expression.
   # Default: "*/1 * * * *" (every minute).
   cron: "*/5 * * * *"

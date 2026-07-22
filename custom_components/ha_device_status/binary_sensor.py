@@ -14,12 +14,10 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.components.mqtt import async_subscribe
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 import homeassistant.util.dt as dt_util
-import voluptuous as vol
 
 from .const import (
     CONF_COUNT,
@@ -44,49 +42,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-ITEM_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_TYPE): vol.In(["ping", "port", "mqtt"]),
-        vol.Optional(CONF_IP): cv.string,
-        vol.Optional(CONF_PORT): cv.port,
-        vol.Optional(CONF_TOPIC): cv.string,
-        vol.Optional(CONF_PAYLOAD, default=DEFAULT_PAYLOAD): cv.string,
-        vol.Optional(CONF_INTERFACE): cv.string,
-        vol.Optional(CONF_COUNT, default=DEFAULT_COUNT): cv.positive_int,
-        vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-
-
-def _validate_cron(value: str) -> str:
-    """Validate that a string is a parseable cron expression."""
-    value = cv.string(value)
-    if not croniter.is_valid(value):
-        raise vol.Invalid(f"Invalid cron expression: {value}")
-    return value
-
-
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: vol.Schema(
-            {
-                vol.Required(CONF_ITEMS): vol.All(cv.ensure_list, [ITEM_SCHEMA]),
-                vol.Optional(CONF_NOTIFY, default=[]): vol.All(
-                    cv.ensure_list, [cv.string]
-                ),
-                vol.Optional(CONF_NOTIFY_SERVICES, default=[]): vol.All(
-                    cv.ensure_list, [cv.string]
-                ),
-                vol.Optional(CONF_NOTIFY_ONLINE, default=False): cv.boolean,
-                vol.Optional(CONF_CRON, default=DEFAULT_CRON): _validate_cron,
-            }
-        )
-    },
-    extra=vol.ALLOW_EXTRA,
-)
 
 
 async def _async_ping(

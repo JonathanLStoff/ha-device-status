@@ -38,10 +38,19 @@ jobs:
             exit 1
           fi
 
-          zip -r ha_device_status.zip README.md hacs.json custom_components/ha_device_status/
+          # HACS zip releases must contain the integration's files at the
+          # archive ROOT (manifest.json, __init__.py, ...). Zipping the
+          # custom_components/ha_device_status/ path itself causes HACS to
+          # install it doubled-up as
+          # custom_components/ha_device_status/custom_components/ha_device_status/.
+          ( cd "$INTEGRATION_FOLDER" && zip -r "$OLDPWD/ha_device_status.zip" . -x '__pycache__/*' '*.pyc' )
 
-          if ! unzip -l ha_device_status.zip | grep -q 'custom_components/ha_device_status/manifest.json'; then
-            echo "Archive does not contain custom_components/ha_device_status/manifest.json"
+          if ! unzip -l ha_device_status.zip | grep -qE '^\s*[0-9]+.*\smanifest\.json$'; then
+            echo "Archive does not contain manifest.json at its root!"
+            exit 1
+          fi
+          if unzip -l ha_device_status.zip | grep -q 'custom_components/'; then
+            echo "Archive incorrectly contains a nested custom_components/ path!"
             exit 1
           fi
 

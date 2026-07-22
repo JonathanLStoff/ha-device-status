@@ -13,6 +13,8 @@ This integration creates binary sensor entities for devices you want to monitor.
 - Check whether a TCP port is open
 - Subscribe to an MQTT topic and compare the payload to an expected value
 
+It can also bring up a WireGuard interface itself, so you don't have to configure the tunnel outside of Home Assistant first.
+
 When a monitored item goes offline it can:
 
 - Create a persistent notification in Home Assistant
@@ -43,6 +45,15 @@ Example:
 
 ```yaml
 ha_device_status:
+  wireguard:                     # optional: bring up a tunnel yourself
+    interface: wg0
+    address: 10.10.0.2/24
+    private_key: !secret wg_private_key
+    peers:
+      - public_key: "SERVER_PUBLIC_KEY"
+        endpoint: "vpn.example.com:51820"
+        allowed_ips: "10.10.0.0/24"
+
   cron: "*/5 * * * *"            # how often to check ping/port devices
   notify_services:               # companion-app services, one per phone
     - mobile_app_johns_iphone
@@ -77,6 +88,7 @@ ha_device_status:
 
 | Key | Scope | Description |
 | --- | --- | --- |
+| `wireguard` | top level | Optional. Have the integration bring up a WireGuard interface itself. See below. |
 | `cron` | top level | Cron expression for how often ping/port devices are checked. Default `*/1 * * * *` (every minute). |
 | `notify_services` | top level | List of Home Assistant companion-app notify services (e.g. `mobile_app_johns_iphone`). Find yours under **Developer Tools → Actions**. |
 | `notify_online` | top level | If `true`, also push a notification when a device comes back online. Default `false`. |
@@ -87,7 +99,12 @@ ha_device_status:
 
 **Notifying phones:** each phone with the Home Assistant companion app exposes a `notify.mobile_app_<device>` service. List those service names (without the `notify.` prefix) under `notify_services`, and list which devices should trigger alerts under `notify_offline`.
 
-**WireGuard pings:** pinging a device by its VPN IP works automatically if your Home Assistant host routes that subnet over WireGuard. Set `interface: wg0` (or your tunnel's interface name) to force the ping out that specific interface.
+**WireGuard tunnel:** the `wireguard` block will bring the interface up for you at startup, either from inline keys/peers or from an existing wg-quick config file (`config_path`). When using `config_path`, `interface` can be omitted — it's derived from the filename the same way `wg-quick` does (e.g. `wg0.conf` → interface `wg0`); set `interface` explicitly if you want to override that. This requires:
+
+- `wireguard-tools` (`wg`, `wg-quick`) installed on the Home Assistant host/container
+- `NET_ADMIN` capability available to that host/container
+
+If the interface already exists (e.g. you set it up another way), the integration leaves it alone and won't tear it down on shutdown. If it brought the interface up itself, it tears it down when Home Assistant stops. Once the tunnel is up, set `interface: wg0` (matching the `wireguard.interface` name) on any ping item that needs to reach a device across it.
 
 If you use MQTT-based checks, make sure the MQTT integration is configured in Home Assistant.
 
