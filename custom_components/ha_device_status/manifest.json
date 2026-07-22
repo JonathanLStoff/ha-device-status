@@ -1,7 +1,7 @@
 {
   "domain": "ha_device_status",
   "name": "Device Status",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "documentation": "https://github.com/JonathanLStoff/ha-device-status",
   "requirements": ["croniter==2.0.5"],
   "dependencies": ["mqtt"],
