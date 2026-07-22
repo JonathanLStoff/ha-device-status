@@ -15,6 +15,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.components.mqtt import async_subscribe
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -43,6 +44,23 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+HUB_DEVICE_IDENTIFIER = "hub"
+
+
+def _hub_device_info() -> DeviceInfo:
+    """Shared virtual device all UI-added monitored devices attach to.
+
+    Grouping every ping/port/mqtt entity under one device lets you use
+    Home Assistant's built-in "Add to dashboard" button on that device's
+    page to add a status card for all of them, with no YAML needed.
+    """
+    return DeviceInfo(
+        identifiers={(DOMAIN, HUB_DEVICE_IDENTIFIER)},
+        name="Device Status",
+        manufacturer="ha-device-status",
+        model="Network Monitor",
+    )
 
 
 async def _async_ping(
@@ -163,18 +181,37 @@ async def async_setup_entry(
     cron_expr = options.get(CONF_CRON, DEFAULT_CRON)
 
     unique_id = f"network_monitor_entry_{entry.entry_id}"
+    device_info = _hub_device_info()
     item_type = item[CONF_TYPE]
     if item_type == "ping":
         sensor = PingSensor(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
     elif item_type == "port":
         sensor = PortSensor(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
     else:
         sensor = MqttSensor(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
 
     async_add_entities([sensor], update_before_add=True)
@@ -188,7 +225,14 @@ class NetworkMonitorSensor(BinarySensorEntity):
     """Base class for network monitor sensors."""
 
     def __init__(
-        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+        self,
+        hass,
+        item,
+        notify_offline,
+        notify_services,
+        notify_online,
+        unique_id=None,
+        device_info=None,
     ):
         self.hass = hass
         self._item = item
@@ -199,6 +243,7 @@ class NetworkMonitorSensor(BinarySensorEntity):
         self._state = None
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_unique_id = unique_id or f"network_monitor_{self._name}"
+        self._attr_device_info = device_info
 
     @property
     def name(self):
@@ -274,10 +319,23 @@ class PingSensor(NetworkMonitorSensor):
     """Ping an IP address, optionally over a specific interface (e.g. WireGuard)."""
 
     def __init__(
-        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+        self,
+        hass,
+        item,
+        notify_offline,
+        notify_services,
+        notify_online,
+        unique_id=None,
+        device_info=None,
     ):
         super().__init__(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
         self._ip = item[CONF_IP]
         self._interface = item.get(CONF_INTERFACE)
@@ -299,10 +357,23 @@ class PortSensor(NetworkMonitorSensor):
     """Check if a TCP port is open."""
 
     def __init__(
-        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+        self,
+        hass,
+        item,
+        notify_offline,
+        notify_services,
+        notify_online,
+        unique_id=None,
+        device_info=None,
     ):
         super().__init__(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
         self._ip = item[CONF_IP]
         self._port = item[CONF_PORT]
@@ -327,10 +398,23 @@ class MqttSensor(NetworkMonitorSensor):
     """Subscribe to an MQTT topic and set state based on payload."""
 
     def __init__(
-        self, hass, item, notify_offline, notify_services, notify_online, unique_id=None
+        self,
+        hass,
+        item,
+        notify_offline,
+        notify_services,
+        notify_online,
+        unique_id=None,
+        device_info=None,
     ):
         super().__init__(
-            hass, item, notify_offline, notify_services, notify_online, unique_id
+            hass,
+            item,
+            notify_offline,
+            notify_services,
+            notify_online,
+            unique_id,
+            device_info,
         )
         self._topic = item[CONF_TOPIC]
         self._expected_payload = item.get(CONF_PAYLOAD, DEFAULT_PAYLOAD)

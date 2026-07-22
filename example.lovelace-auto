@@ -1,11 +1,19 @@
+# Auto-populating status card: automatically lists every device this
+# integration creates (ping/port/mqtt), including devices added later,
+# without editing this card. WireGuard entries are never entities, so they
+# never show up here.
+#
+# Requires the "auto-entities" custom card from HACS (Frontend section):
+# https://github.com/thomasloven/lovelace-auto-entities
 type: custom:auto-entities
 card:
   type: entities
   title: Network Status
 filter:
   include:
-    - domain: binary_sensor
-      device_class: connectivity
+    - integration: ha_device_status
       options:
         type: custom:multiple-entity-row
         state_header: Status
+sort:
+  method: friendly_name

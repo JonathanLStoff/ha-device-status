@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_WG_INTERFACE, CONF_WIREGUARD, DOMAIN
+from .const import CONF_TYPE, CONF_WG_INTERFACE, CONF_WIREGUARD, DOMAIN
 from .schema import CONFIG_SCHEMA  # noqa: F401 - required by Home Assistant's config validation
 from .wireguard import async_setup_wireguard, async_teardown_wireguard
 
@@ -48,17 +48,41 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up a single monitored device added via the UI."""
+    """Set up a config entry: a WireGuard interface, or a monitored device."""
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
+    if entry.data.get(CONF_TYPE) == "wireguard":
+        wg_up, wg_managed = await async_setup_wireguard(hass, entry.data)
+        if not wg_up:
+            _LOGGER.error(
+                "Failed to bring up WireGuard interface %s for entry %s; "
+                "ping checks over it will fail until it's brought up",
+                entry.data.get(CONF_WG_INTERFACE),
+                entry.title,
+            )
+            return False
+        hass.data.setdefault(DOMAIN, {}).setdefault("wireguard_managed", {})[
+            entry.entry_id
+        ] = wg_managed
+        return True
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a device's config entry."""
+    """Unload a config entry: tear down a WireGuard interface, or a device."""
+    if entry.data.get(CONF_TYPE) == "wireguard":
+        managed = hass.data.get(DOMAIN, {}).get("wireguard_managed", {}).pop(
+            entry.entry_id, False
+        )
+        if managed:
+            await async_teardown_wireguard(entry.data[CONF_WG_INTERFACE])
+        return True
+
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload a device's config entry when its options change."""
+    """Reload a config entry when its options (or WireGuard details) change."""
     await hass.config_entries.async_reload(entry.entry_id)

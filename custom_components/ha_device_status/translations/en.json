@@ -3,17 +3,17 @@
     "step": {
       "user": {
         "title": "Add a monitored device",
-        "description": "Give this device a name and pick how it should be checked. You'll set notifications and the check schedule next.",
+        "description": "Give this a name and pick what it is. A WireGuard interface isn't monitored itself, but can then be selected as the \"interface\" for a ping device.",
         "data": {
           "name": "Name",
-          "type": "Check type"
+          "type": "Type"
         }
       },
       "ping": {
         "title": "Ping settings",
         "data": {
           "ip": "IP address or hostname",
-          "interface": "Network interface (e.g. wg0 to ping over a WireGuard tunnel)",
+          "interface": "Network interface (pick a configured WireGuard tunnel, or type your own)",
           "count": "Ping attempts",
           "timeout": "Timeout per attempt (seconds)"
         }
@@ -33,6 +33,23 @@
           "payload": "Expected \"online\" payload"
         }
       },
+      "wireguard": {
+        "title": "WireGuard interface",
+        "description": "Either point at an existing wg-quick config file, or fill in the keys/peer below to build one. Requires wireguard-tools and NET_ADMIN on the Home Assistant host.",
+        "data": {
+          "config_path": "Existing wg-quick config file path",
+          "interface": "Interface name (derived from the config file name if left blank)",
+          "address": "Address (e.g. 10.10.0.2/24)",
+          "private_key": "Private key",
+          "listen_port": "Listen port (optional)",
+          "dns": "DNS (optional)",
+          "public_key": "Peer public key",
+          "endpoint": "Peer endpoint (host:port)",
+          "allowed_ips": "Peer allowed IPs",
+          "persistent_keepalive": "Persistent keepalive seconds (optional)",
+          "preshared_key": "Peer preshared key (optional)"
+        }
+      },
       "notify": {
         "title": "Notifications & schedule",
         "description": "Choose which notify services (e.g. your phone's companion app) should be alerted, and how often this device is checked.",
@@ -45,7 +62,10 @@
       }
     },
     "error": {
-      "invalid_cron": "That's not a valid cron expression."
+      "invalid_cron": "That's not a valid cron expression.",
+      "wireguard_needs_interface_or_config_path": "Set an interface name, or a config file path to derive it from.",
+      "wireguard_bad_config_path": "Couldn't derive an interface name from that config file path.",
+      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer allowed IPs."
     },
     "abort": {
       "already_configured": "A device with this name is already configured."
@@ -62,10 +82,30 @@
           "notify_online": "Also notify when it comes back online",
           "cron": "Check schedule (cron expression)"
         }
+      },
+      "wireguard": {
+        "title": "WireGuard interface",
+        "description": "Editing this reconnects the tunnel with the new details.",
+        "data": {
+          "config_path": "Existing wg-quick config file path",
+          "interface": "Interface name (derived from the config file name if left blank)",
+          "address": "Address (e.g. 10.10.0.2/24)",
+          "private_key": "Private key",
+          "listen_port": "Listen port (optional)",
+          "dns": "DNS (optional)",
+          "public_key": "Peer public key",
+          "endpoint": "Peer endpoint (host:port)",
+          "allowed_ips": "Peer allowed IPs",
+          "persistent_keepalive": "Persistent keepalive seconds (optional)",
+          "preshared_key": "Peer preshared key (optional)"
+        }
       }
     },
     "error": {
-      "invalid_cron": "That's not a valid cron expression."
+      "invalid_cron": "That's not a valid cron expression.",
+      "wireguard_needs_interface_or_config_path": "Set an interface name, or a config file path to derive it from.",
+      "wireguard_bad_config_path": "Couldn't derive an interface name from that config file path.",
+      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer allowed IPs."
     }
   }
 }

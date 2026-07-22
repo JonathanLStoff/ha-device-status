@@ -41,13 +41,28 @@ Copy the folder [custom_components/ha_device_status](custom_components/ha_device
 
 After installing, go to **Settings → Devices & Services → Add Integration**, search for "Device Status", and add it. Each time you run through the flow you add **one device**:
 
-1. **Name & check type** — pick `ping`, `port`, or `mqtt`.
-2. **Connection details** — IP/hostname and port, MQTT topic/payload, or ping options (`interface` for routing over a WireGuard tunnel, attempt count, timeout).
-3. **Notifications & schedule** — pick which `notify.*` services (e.g. your phone's Home Assistant companion app) should be alerted for *this device*, whether to also notify on recovery, and the cron schedule for how often it's checked.
+1. **Name & type** — pick `ping`, `port`, `mqtt`, or `wireguard`.
+2. **Connection details**:
+   - `ping` — IP/hostname, attempt count, timeout, and an **interface** you pick from a dropdown (any WireGuard tunnel you've already added through this integration shows up as an option, the same way notify services do below — or type your own interface name if it's managed elsewhere).
+   - `port` — IP/hostname and port.
+   - `mqtt` — topic and expected payload.
+   - `wireguard` — see "Adding a WireGuard tunnel" below. This isn't a monitored device (no binary sensor); it exists so its interface can be selected by `ping` devices.
+3. **Notifications & schedule** *(skipped for `wireguard`)* — pick which `notify.*` services (e.g. your phone's Home Assistant companion app) should be alerted for *this device*, whether to also notify on recovery, and the cron schedule for how often it's checked.
 
-Repeat "Add Integration" for each additional device — every device is its own entry with its own notification routing and schedule. To change a device's notify services or schedule later, click **Configure** on that entry in Devices & Services.
+Repeat "Add Integration" for each additional device — every device is its own entry with its own notification routing and schedule. To change a device's notify services/schedule, or a WireGuard tunnel's connection details, click **Configure** on that entry in Devices & Services.
 
 To route notifications to a phone, install the [Home Assistant companion app](https://www.home-assistant.io/companion-app/) on it first — its `notify.mobile_app_<device>` service will then show up as an option in the flow.
+
+### Adding a WireGuard tunnel
+
+Add a device with type `wireguard` to have the integration bring up the tunnel itself, either:
+
+- **From an existing config**: set "Existing wg-quick config file path" to a `wg-quick`-style `.conf` file. The interface name is derived from the filename (e.g. `wg0.conf` → `wg0`) unless you set one explicitly.
+- **Inline**: leave the config path blank and fill in interface, address, private key, and the peer's public key + allowed IPs (endpoint, keepalive, and preshared key are optional). This models a single-peer client setup — the common case of connecting out to one VPN server.
+
+This requires `wireguard-tools` (`wg`, `wg-quick`) and `NET_ADMIN` capability on the Home Assistant host/container. If the interface already exists (managed some other way), the integration leaves it alone and won't tear it down; if it brought the interface up itself, it tears it down when that entry is removed or Home Assistant stops.
+
+Once added, pick that tunnel's interface from the dropdown when adding a `ping` device.
 
 ## Configuration via YAML (advanced / bulk setup)
 
@@ -120,9 +135,20 @@ If the interface already exists (e.g. you set it up another way), the integratio
 
 If you use MQTT-based checks, make sure the MQTT integration is configured in Home Assistant.
 
-## Lovelace example
+## Dashboard status card
 
-A sample Lovelace card configuration is available in [example.lovelace](example.lovelace).
+Every monitored device (ping/port/mqtt) you add through the UI is grouped under one shared **"Device Status"** device, so you can add a status card entirely through the UI, no YAML at all:
+
+1. Go to **Settings → Devices & Services → Device Status**, then open the **Devices** tab and click into the **Device Status** device (it lists every ping/port/mqtt device you've added).
+2. Click **Add to dashboard** (top of the device page).
+3. Pick the entities you want (or select all), choose a dashboard/view, and pick a card type (an Entities or Glance card both work well) — Home Assistant builds the card for you.
+
+Repeat step 2 any time you've added new devices and want them on the card too — this "Add to dashboard" flow is native to Home Assistant, no custom cards or config files required. WireGuard entries never appear here, since they aren't monitored devices.
+
+If you'd rather define the card yourself in YAML, two examples are included:
+
+- [example.lovelace](example.lovelace) — a plain `entities` card listing specific entity IDs. No extra dependencies, but you add a line yourself each time you add a new device.
+- [example.lovelace-auto](example.lovelace-auto) — an auto-populating card using the [auto-entities](https://github.com/thomasloven/lovelace-auto-entities) custom card (install it via HACS → Frontend first). It filters by `integration: ha_device_status`, so every device shows up automatically, with no editing required.
 
 ## Maintainers
 

@@ -1,3 +1,7 @@
+# Manual status card: lists specific devices by entity_id, no extra
+# dependencies needed. You'll need to add a line here yourself each time you
+# add a new device through the integration. For a card that updates itself
+# automatically, see example.lovelace-auto instead.
 type: entities
 entities:
   - entity: binary_sensor.router
