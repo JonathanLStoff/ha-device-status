@@ -1,5 +1,8 @@
 {
-    "name": "Device Status",
-    "homeassistant": "2026.6.4",
-    "hacs": "2.0.5"
+  "name": "Device Status",
+  "filename": "ha_device_status.zip",
+  "zip_release": true,
+  "hide_default_branch": true,
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
 }
