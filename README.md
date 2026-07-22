@@ -137,13 +137,14 @@ If you use MQTT-based checks, make sure the MQTT integration is configured in Ho
 
 ## Dashboard status card
 
-Every monitored device (ping/port/mqtt) you add through the UI is grouped under one shared **"Device Status"** device, so you can add a status card entirely through the UI, no YAML at all:
+Every monitored device (ping/port/mqtt) you add through the UI gets its own Home Assistant device and entity under **Settings → Devices & Services → Device Status**. To add a status card for all of them at once, entirely through the UI, no YAML at all:
 
-1. Go to **Settings → Devices & Services → Device Status**, then open the **Devices** tab and click into the **Device Status** device (it lists every ping/port/mqtt device you've added).
-2. Click **Add to dashboard** (top of the device page).
-3. Pick the entities you want (or select all), choose a dashboard/view, and pick a card type (an Entities or Glance card both work well) — Home Assistant builds the card for you.
+1. Go to **Settings → Devices & Services → Entities**.
+2. Use the filter sidebar to filter by **Integration: Device Status**. This lists every monitored device's entity (WireGuard entries never appear here, since they aren't monitored devices and have no entity).
+3. Select them all (checkbox in the header selects every filtered row), then click **Add to dashboard** in the action bar that appears.
+4. Choose a dashboard/view and a card type (Entities or Glance both work well) — Home Assistant builds the card for you.
 
-Repeat step 2 any time you've added new devices and want them on the card too — this "Add to dashboard" flow is native to Home Assistant, no custom cards or config files required. WireGuard entries never appear here, since they aren't monitored devices.
+Repeat any time you've added new devices and want them included — this is Home Assistant's native entity management UI, no custom cards or config files required. You can also open a single device's page (via its entity, or under the **Devices** tab) and use the **Add to dashboard** button there for just that one device.
 
 If you'd rather define the card yourself in YAML, two examples are included:
 

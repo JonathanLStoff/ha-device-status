@@ -45,21 +45,21 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-HUB_DEVICE_IDENTIFIER = "hub"
 
+def _device_info(entry: ConfigEntry, item: dict) -> DeviceInfo:
+    """One Home Assistant device per monitored device.
 
-def _hub_device_info() -> DeviceInfo:
-    """Shared virtual device all UI-added monitored devices attach to.
-
-    Grouping every ping/port/mqtt entity under one device lets you use
-    Home Assistant's built-in "Add to dashboard" button on that device's
-    page to add a status card for all of them, with no YAML needed.
+    Sharing a single device across many config entries is unreliable in
+    Home Assistant's device registry (entities can fail to attach to it
+    correctly), so each entry gets its own device instead — the standard,
+    robust pattern. It still shows up under Settings -> Devices & Services,
+    and its "Add to dashboard" button works as expected.
     """
     return DeviceInfo(
-        identifiers={(DOMAIN, HUB_DEVICE_IDENTIFIER)},
-        name="Device Status",
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=item[CONF_NAME],
         manufacturer="ha-device-status",
-        model="Network Monitor",
+        model=item[CONF_TYPE].capitalize(),
     )
 
 
@@ -181,7 +181,7 @@ async def async_setup_entry(
     cron_expr = options.get(CONF_CRON, DEFAULT_CRON)
 
     unique_id = f"network_monitor_entry_{entry.entry_id}"
-    device_info = _hub_device_info()
+    device_info = _device_info(entry, item)
     item_type = item[CONF_TYPE]
     if item_type == "ping":
         sensor = PingSensor(
@@ -244,6 +244,10 @@ class NetworkMonitorSensor(BinarySensorEntity):
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_unique_id = unique_id or f"network_monitor_{self._name}"
         self._attr_device_info = device_info
+        # We drive updates ourselves via the cron schedule / MQTT subscription;
+        # without this, HA's generic entity polling would also call
+        # async_update() on its own default interval, doubling checks.
+        self._attr_should_poll = False
 
     @property
     def name(self):
