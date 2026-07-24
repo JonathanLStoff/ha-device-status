@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /tmp/wireguard-requests -type f \\\\\\( -name \"*.py\" -o -name \"*.pyi\" \\\\\\) | grep -v test | sort)",
+      "Read(//private/tmp/wireguard-requests/**)",
+      "Read(//tmp/wireguard-requests/python/wireguard_requests/**)",
+      "Read(//private/tmp/wireguard-requests/python/wireguard_requests/**)",
+      "Bash(rm -rf /tmp/wireguard-requests)",
+      "Bash(python3 -m pip install --dry-run wireguard-requests==0.0.3)",
+      "Bash(curl -s https://pypi.org/pypi/wireguard-requests/json)",
+      "Bash(python3 -c ' *)"
+    ],
+    "additionalDirectories": [
+      "/private/tmp/wireguard-requests"
+    ]
+  }
+}

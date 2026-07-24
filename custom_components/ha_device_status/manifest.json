@@ -1,9 +1,9 @@
 {
   "domain": "ha_device_status",
   "name": "Device Status",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "documentation": "https://github.com/JonathanLStoff/ha-device-status",
-  "requirements": ["croniter==2.0.5"],
+  "requirements": ["croniter==2.0.5", "wireguard-requests==0.0.3"],
   "dependencies": ["mqtt"],
   "codeowners": ["@JonathanLStoff"],
   "issue_tracker": "https://github.com/JonathanLStoff/ha-device-status/issues",

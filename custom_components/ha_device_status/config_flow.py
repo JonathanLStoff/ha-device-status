@@ -3,16 +3,17 @@
 Each config entry represents either:
 - a single monitored device (ping/port/mqtt), added through the UI
   (Settings -> Devices & Services -> Add Integration -> Device Status), or
-- a WireGuard interface, which isn't monitored itself but can be picked as
-  the "interface" for a ping device the same way a notify service is picked.
+- a WireGuard tunnel (in-process, via wireguard-requests - no system
+  interface), which isn't monitored itself but can be picked as the
+  "interface" for a ping or port device the same way a notify service is
+  picked.
 
 The options flow lets you change where notifications for a device go and how
-often it's checked, or edit a WireGuard interface's connection details,
-without having to remove and re-add the entry.
+often it's checked, or edit a WireGuard tunnel's connection details, without
+having to remove and re-add the entry.
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from croniter import croniter
@@ -44,7 +45,6 @@ from .const import (
     CONF_WG_ADDRESS,
     CONF_WG_CONFIG_PATH,
     CONF_WG_DNS,
-    CONF_WG_INTERFACE,
     CONF_WG_LISTEN_PORT,
     CONF_WG_PEER_ALLOWED_IPS,
     CONF_WG_PEER_ENDPOINT,
@@ -68,15 +68,12 @@ def _notify_service_options(hass) -> list[str]:
     return sorted(hass.services.async_services().get("notify", {}))
 
 
-def _wireguard_interface_options(hass) -> list[str]:
-    """List interface names from WireGuard entries already configured here."""
+def _wireguard_tunnel_options(hass) -> list[str]:
+    """List names of WireGuard tunnel entries already configured here."""
     return sorted(
-        {
-            entry.data[CONF_WG_INTERFACE]
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.data.get(CONF_TYPE) == "wireguard"
-            and entry.data.get(CONF_WG_INTERFACE)
-        }
+        entry.data[CONF_NAME]
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(CONF_TYPE) == "wireguard"
     )
 
 
@@ -117,9 +114,6 @@ def _wireguard_schema(defaults: dict) -> vol.Schema:
                 CONF_WG_CONFIG_PATH, default=defaults.get(CONF_WG_CONFIG_PATH, "")
             ): str,
             vol.Optional(
-                CONF_WG_INTERFACE, default=defaults.get(CONF_WG_INTERFACE, "")
-            ): str,
-            vol.Optional(
                 CONF_WG_ADDRESS, default=defaults.get(CONF_WG_ADDRESS, "")
             ): str,
             vol.Optional(
@@ -151,34 +145,28 @@ def _wireguard_schema(defaults: dict) -> vol.Schema:
 def _finalize_wireguard(user_input: dict) -> tuple[dict | None, str | None]:
     """Turn the flat WireGuard form input into the shape wireguard.py expects.
 
-    Returns (data, error_code). data is None when error_code is set.
+    Returns (data, error_code). data is None when error_code is set. There's
+    no "interface name" here - this tunnel is looked up by its device name
+    (CONF_NAME, collected in the first step), since there's no system
+    network interface to name.
     """
     config_path = user_input.get(CONF_WG_CONFIG_PATH) or None
-    interface = user_input.get(CONF_WG_INTERFACE) or None
-
-    if not interface:
-        if not config_path:
-            return None, "wireguard_needs_interface_or_config_path"
-        derived = os.path.splitext(os.path.basename(config_path))[0]
-        if not derived:
-            return None, "wireguard_bad_config_path"
-        interface = derived
-
-    data: dict[str, Any] = {CONF_WG_INTERFACE: interface}
 
     if config_path:
-        data[CONF_WG_CONFIG_PATH] = config_path
-        return data, None
+        return {CONF_WG_CONFIG_PATH: config_path}, None
 
     private_key = user_input.get(CONF_WG_PRIVATE_KEY) or None
     address = user_input.get(CONF_WG_ADDRESS) or None
     peer_public_key = user_input.get(CONF_WG_PEER_PUBLIC_KEY) or None
+    peer_endpoint = user_input.get(CONF_WG_PEER_ENDPOINT) or None
     peer_allowed_ips = user_input.get(CONF_WG_PEER_ALLOWED_IPS) or None
-    if not (private_key and address and peer_public_key and peer_allowed_ips):
+    if not (private_key and address and peer_public_key and peer_endpoint and peer_allowed_ips):
         return None, "wireguard_needs_inline_fields"
 
-    data[CONF_WG_PRIVATE_KEY] = private_key
-    data[CONF_WG_ADDRESS] = address
+    data: dict[str, Any] = {
+        CONF_WG_PRIVATE_KEY: private_key,
+        CONF_WG_ADDRESS: address,
+    }
     if user_input.get(CONF_WG_LISTEN_PORT):
         data[CONF_WG_LISTEN_PORT] = user_input[CONF_WG_LISTEN_PORT]
     if user_input.get(CONF_WG_DNS):
@@ -186,10 +174,9 @@ def _finalize_wireguard(user_input: dict) -> tuple[dict | None, str | None]:
 
     peer = {
         CONF_WG_PEER_PUBLIC_KEY: peer_public_key,
+        CONF_WG_PEER_ENDPOINT: peer_endpoint,
         CONF_WG_PEER_ALLOWED_IPS: peer_allowed_ips,
     }
-    if user_input.get(CONF_WG_PEER_ENDPOINT):
-        peer[CONF_WG_PEER_ENDPOINT] = user_input[CONF_WG_PEER_ENDPOINT]
     if user_input.get(CONF_WG_PEER_PERSISTENT_KEEPALIVE):
         peer[CONF_WG_PEER_PERSISTENT_KEEPALIVE] = user_input[
             CONF_WG_PEER_PERSISTENT_KEEPALIVE
@@ -241,26 +228,33 @@ class DeviceStatusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_ping(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        if user_input is not None:
-            self._data.update(user_input)
-            return await self.async_step_notify()
+        errors: dict[str, str] = {}
+        tunnel_names = _wireguard_tunnel_options(self.hass)
 
-        interface_options = _wireguard_interface_options(self.hass)
+        if user_input is not None:
+            interface = user_input.get(CONF_INTERFACE) or None
+            if interface in tunnel_names and not user_input.get(CONF_PORT):
+                errors[CONF_PORT] = "wireguard_ping_needs_port"
+            else:
+                self._data.update(user_input)
+                return await self.async_step_notify()
+
         schema = vol.Schema(
             {
                 vol.Required(CONF_IP): str,
                 vol.Optional(CONF_INTERFACE): SelectSelector(
                     SelectSelectorConfig(
-                        options=interface_options,
+                        options=tunnel_names,
                         custom_value=True,
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(CONF_PORT): int,
                 vol.Optional(CONF_COUNT, default=DEFAULT_COUNT): int,
                 vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
             }
         )
-        return self.async_show_form(step_id="ping", data_schema=schema)
+        return self.async_show_form(step_id="ping", data_schema=schema, errors=errors)
 
     async def async_step_port(
         self, user_input: dict[str, Any] | None = None
@@ -269,10 +263,18 @@ class DeviceStatusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data.update(user_input)
             return await self.async_step_notify()
 
+        tunnel_names = _wireguard_tunnel_options(self.hass)
         schema = vol.Schema(
             {
                 vol.Required(CONF_IP): str,
                 vol.Required(CONF_PORT): int,
+                vol.Optional(CONF_INTERFACE): SelectSelector(
+                    SelectSelectorConfig(
+                        options=tunnel_names,
+                        custom_value=True,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
             }
         )

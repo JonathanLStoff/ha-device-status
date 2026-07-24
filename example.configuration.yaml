@@ -4,10 +4,11 @@
 # notify routing and schedule. YAML is mainly useful for bulk setup and for
 # the global "wireguard" interface below, which isn't tied to one device.
 ha_device_status:
-  # Optional: have the integration bring up a WireGuard interface itself so
-  # ping checks can reach devices on the other end of the tunnel. Requires
-  # `wireguard-tools` on the host and NET_ADMIN capability. If the interface
-  # is already up (e.g. managed elsewhere), it's left alone.
+  # Optional: have the integration establish a WireGuard tunnel itself so
+  # ping/port checks can reach devices on the other end. Runs entirely in
+  # Python (via wireguard-requests) - no system network interface, no
+  # wireguard-tools, no NET_ADMIN. Only TCP is supported (no ICMP), so a
+  # ping item routed through it needs a "port" set - see below.
   wireguard:
     # Point at an existing wg-quick config file. "interface" is derived from
     # the filename (e.g. "wg0.conf" -> interface "wg0"), just like wg-quick
@@ -48,7 +49,9 @@ ha_device_status:
     - name: "Remote NAS"          # reachable only over the WireGuard tunnel
       type: ping
       ip: 10.0.0.5
-      interface: wg0              # send the ping out the WireGuard interface
+      interface: wg0              # route through the tunnel named "wg0" above
+      port: 22                     # required when routing a ping through a
+                                    # WireGuard tunnel - it's a TCP check, no ICMP
       count: 3                     # optional, default 2
       timeout: 5                   # optional, per-attempt seconds, default 3
 

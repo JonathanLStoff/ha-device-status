@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add a monitored device",
-        "description": "Give this a name and pick what it is. A WireGuard interface isn't monitored itself, but can then be selected as the \"interface\" for a ping device.",
+        "description": "Give this a name and pick what it is. A WireGuard tunnel isn't monitored itself, but can then be selected as the \"interface\" for a ping or port device.",
         "data": {
           "name": "Name",
           "type": "Type"
@@ -11,9 +11,11 @@
       },
       "ping": {
         "title": "Ping settings",
+        "description": "Picking a WireGuard tunnel here checks TCP reachability through it instead of a real ICMP ping (WireGuard-in-Python has no ICMP support), so a port is required in that case.",
         "data": {
           "ip": "IP address or hostname",
-          "interface": "Network interface (pick a configured WireGuard tunnel, or type your own)",
+          "interface": "Network interface (pick a configured WireGuard tunnel, or type your own for the system ping)",
+          "port": "TCP port (required if a WireGuard tunnel is selected above)",
           "count": "Ping attempts",
           "timeout": "Timeout per attempt (seconds)"
         }
@@ -23,6 +25,7 @@
         "data": {
           "ip": "IP address or hostname",
           "port": "TCP port",
+          "interface": "WireGuard tunnel to route through (optional)",
           "timeout": "Timeout (seconds)"
         }
       },
@@ -34,11 +37,10 @@
         }
       },
       "wireguard": {
-        "title": "WireGuard interface",
-        "description": "Either point at an existing wg-quick config file, or fill in the keys/peer below to build one. Requires wireguard-tools and NET_ADMIN on the Home Assistant host.",
+        "title": "WireGuard tunnel",
+        "description": "Runs entirely in Python (via wireguard-requests) - no system network interface, no wireguard-tools, no NET_ADMIN. Only TCP is supported, no ICMP. Either point at an existing wg-quick config file, or fill in the keys/peer below to build one.",
         "data": {
           "config_path": "Existing wg-quick config file path (relative paths resolve against the Home Assistant config directory)",
-          "interface": "Interface name (derived from the config file name if left blank)",
           "address": "Address (e.g. 10.10.0.2/24)",
           "private_key": "Private key",
           "listen_port": "Listen port (optional)",
@@ -63,9 +65,8 @@
     },
     "error": {
       "invalid_cron": "That's not a valid cron expression.",
-      "wireguard_needs_interface_or_config_path": "Set an interface name, or a config file path to derive it from.",
-      "wireguard_bad_config_path": "Couldn't derive an interface name from that config file path.",
-      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer allowed IPs."
+      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer endpoint + peer allowed IPs.",
+      "wireguard_ping_needs_port": "A WireGuard tunnel only supports TCP checks - set a port to check."
     },
     "abort": {
       "already_configured": "A device with this name is already configured."
@@ -84,11 +85,10 @@
         }
       },
       "wireguard": {
-        "title": "WireGuard interface",
+        "title": "WireGuard tunnel",
         "description": "Editing this reconnects the tunnel with the new details.",
         "data": {
           "config_path": "Existing wg-quick config file path (relative paths resolve against the Home Assistant config directory)",
-          "interface": "Interface name (derived from the config file name if left blank)",
           "address": "Address (e.g. 10.10.0.2/24)",
           "private_key": "Private key",
           "listen_port": "Listen port (optional)",
@@ -103,9 +103,8 @@
     },
     "error": {
       "invalid_cron": "That's not a valid cron expression.",
-      "wireguard_needs_interface_or_config_path": "Set an interface name, or a config file path to derive it from.",
-      "wireguard_bad_config_path": "Couldn't derive an interface name from that config file path.",
-      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer allowed IPs."
+      "wireguard_needs_inline_fields": "Fill in a config file path, or private key + address + peer public key + peer endpoint + peer allowed IPs.",
+      "wireguard_ping_needs_port": "A WireGuard tunnel only supports TCP checks - set a port to check."
     }
   }
 }

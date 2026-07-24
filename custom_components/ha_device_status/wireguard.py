@@ -1,17 +1,26 @@
-"""Bring up a WireGuard interface so ping checks can reach devices over it.
+"""Establish in-process WireGuard tunnels for TCP reachability checks.
 
-Requires the `wireguard-tools` package (for `wg-quick`/`wg`) and NET_ADMIN on
-the Home Assistant host/container. If the interface is already up (managed
-outside of this integration), it is left alone and never torn down by us.
+Uses the `wireguard-requests` package (Cloudflare's boringtun + smoltcp,
+via Rust/PyO3 bindings) to speak the WireGuard protocol entirely in
+userspace: no system network interface, no `wireguard-tools`/`wg-quick`
+binary, no NET_ADMIN capability, nothing to install at the OS level.
+
+Only TCP is supported (this library has no ICMP), so a "ping" device
+routed through one of these tunnels performs a TCP-connect reachability
+check instead of a real ICMP echo - see binary_sensor.py.
+
+We deliberately never use wireguard_requests.wireguard_context(): it
+monkeypatches socket.socket and ssl.SSLContext.wrap_socket process-wide for
+its entire duration, which would silently reroute *any* unrelated Home
+Assistant network activity happening concurrently in this same process.
+Instead we build the tunnel directly and drive it with AsyncWireGuardSocket,
+which has no such global side effects.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import shutil
-import stat
-import tempfile
 
 from homeassistant.core import HomeAssistant
 
@@ -19,7 +28,6 @@ from .const import (
     CONF_WG_ADDRESS,
     CONF_WG_CONFIG_PATH,
     CONF_WG_DNS,
-    CONF_WG_INTERFACE,
     CONF_WG_LISTEN_PORT,
     CONF_WG_PEER_ALLOWED_IPS,
     CONF_WG_PEER_ENDPOINT,
@@ -33,101 +41,101 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _run(*cmd: str) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    return proc.returncode, stdout.decode().strip(), stderr.decode().strip()
+def _build_native_tunnel(wg_config: dict, config_path: str | None):
+    """Build the native (Rust-backed) tunnel. Runs in an executor thread.
 
-
-async def _interface_exists(interface: str) -> bool:
-    returncode, _, _ = await _run("ip", "link", "show", interface)
-    return returncode == 0
-
-
-def _render_conf(wg_config: dict) -> str:
-    lines = ["[Interface]", f"PrivateKey = {wg_config[CONF_WG_PRIVATE_KEY]}"]
-    lines.append(f"Address = {wg_config[CONF_WG_ADDRESS]}")
-    if CONF_WG_LISTEN_PORT in wg_config:
-        lines.append(f"ListenPort = {wg_config[CONF_WG_LISTEN_PORT]}")
-    if CONF_WG_DNS in wg_config:
-        lines.append(f"DNS = {wg_config[CONF_WG_DNS]}")
-
-    for peer in wg_config.get(CONF_WG_PEERS, []):
-        lines.append("")
-        lines.append("[Peer]")
-        lines.append(f"PublicKey = {peer[CONF_WG_PEER_PUBLIC_KEY]}")
-        if CONF_WG_PEER_PRESHARED_KEY in peer:
-            lines.append(f"PresharedKey = {peer[CONF_WG_PEER_PRESHARED_KEY]}")
-        lines.append(f"AllowedIPs = {peer[CONF_WG_PEER_ALLOWED_IPS]}")
-        if CONF_WG_PEER_ENDPOINT in peer:
-            lines.append(f"Endpoint = {peer[CONF_WG_PEER_ENDPOINT]}")
-        if CONF_WG_PEER_PERSISTENT_KEEPALIVE in peer:
-            lines.append(
-                f"PersistentKeepalive = {peer[CONF_WG_PEER_PERSISTENT_KEEPALIVE]}"
-            )
-    return "\n".join(lines) + "\n"
-
-
-async def async_setup_wireguard(
-    hass: HomeAssistant, wg_config: dict
-) -> tuple[bool, bool]:
-    """Bring up the configured WireGuard interface if it isn't already up.
-
-    Returns (is_up, managed_by_us). managed_by_us is False when the
-    interface already existed, so we know not to tear down something we
-    didn't create.
+    Does file I/O (for config_path) and tunnel construction, neither of
+    which should run on the event loop.
     """
-    interface = wg_config[CONF_WG_INTERFACE]
+    from wireguard_requests import Peer, WireGuardConfig, _native
 
-    if await _interface_exists(interface):
-        _LOGGER.debug(
-            "WireGuard interface %s already up, leaving it alone", interface
+    if config_path:
+        config = WireGuardConfig.from_file(config_path)
+    else:
+        address = wg_config[CONF_WG_ADDRESS]
+        prefix_len = 24
+        if "/" in address:
+            address, prefix_str = address.split("/", 1)
+            prefix_len = int(prefix_str)
+
+        peers = [
+            Peer(
+                public_key=peer[CONF_WG_PEER_PUBLIC_KEY],
+                endpoint=peer[CONF_WG_PEER_ENDPOINT],
+                allowed_ips=[
+                    ip.strip() for ip in peer[CONF_WG_PEER_ALLOWED_IPS].split(",")
+                ],
+                persistent_keepalive=peer.get(CONF_WG_PEER_PERSISTENT_KEEPALIVE),
+                preshared_key=peer.get(CONF_WG_PEER_PRESHARED_KEY),
+            )
+            for peer in wg_config.get(CONF_WG_PEERS, [])
+        ]
+        dns = wg_config.get(CONF_WG_DNS)
+        config = WireGuardConfig(
+            private_key=wg_config[CONF_WG_PRIVATE_KEY],
+            address=address,
+            prefix_len=prefix_len,
+            peers=peers,
+            listen_port=wg_config.get(CONF_WG_LISTEN_PORT, 0),
+            dns=[dns] if dns else [],
         )
-        return True, False
 
+    return _native.WgTunnel(config.to_native())
+
+
+class WireGuardTunnel:
+    """A single in-process WireGuard tunnel, used for TCP reachability checks."""
+
+    def __init__(self, native_tunnel) -> None:
+        self._tunnel = native_tunnel
+
+    async def check_tcp(self, host: str, port: int, timeout: float) -> bool:
+        """Return True if a TCP connection through the tunnel succeeds."""
+        from wireguard_requests import AsyncWireGuardSocket
+        from wireguard_requests.exceptions import WireGuardError
+
+        sock = AsyncWireGuardSocket(self._tunnel)
+        try:
+            await asyncio.wait_for(sock.connect((host, port)), timeout=timeout)
+            return True
+        except (WireGuardError, OSError, asyncio.TimeoutError):
+            return False
+        finally:
+            await sock.close()
+
+    def close(self) -> None:
+        """Tear down the tunnel."""
+        self._tunnel.close()
+
+
+async def async_create_wireguard_tunnel(
+    hass: HomeAssistant, wg_config: dict
+) -> WireGuardTunnel | None:
+    """Build and start a WireGuard tunnel from the given config.
+
+    Returns None (and logs an error) if the 'wireguard-requests' package
+    isn't installed, or the config is invalid, or the tunnel fails to
+    initialize (e.g. bad keys, malformed config file).
+    """
     config_path = wg_config.get(CONF_WG_CONFIG_PATH)
     if config_path and not os.path.isabs(config_path):
         # Relative paths resolve against the Home Assistant config
         # directory (e.g. "wireguard/wg0.conf" -> "/config/wireguard/wg0.conf").
         config_path = hass.config.path(config_path)
-    tmp_dir = None
 
-    if not config_path:
-        # wg-quick names the interface after the conf file's basename, so it
-        # must be written as "<interface>.conf" for the name to line up.
-        tmp_dir = tempfile.mkdtemp(prefix="ha_device_status_wg_")
-        config_path = os.path.join(tmp_dir, f"{interface}.conf")
-        with open(config_path, "w") as conf_file:
-            conf_file.write(_render_conf(wg_config))
-        os.chmod(config_path, stat.S_IRUSR | stat.S_IWUSR)
-
-    returncode, stdout, stderr = await _run("wg-quick", "up", config_path)
-
-    if tmp_dir:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    if returncode != 0:
+    try:
+        native_tunnel = await hass.async_add_executor_job(
+            _build_native_tunnel, wg_config, config_path
+        )
+    except ImportError:
         _LOGGER.error(
-            "Failed to bring up WireGuard interface %s: %s\n"
-            "Make sure 'wireguard-tools' is installed and the Home "
-            "Assistant host/container has NET_ADMIN capability.",
-            interface,
-            stderr or stdout,
+            "The 'wireguard-requests' package is not installed; this "
+            "WireGuard tunnel can't be set up. Reinstall this integration "
+            "through HACS so its requirements are installed."
         )
-        return False, False
+        return None
+    except Exception as err:  # noqa: BLE001 - surfaces config/library errors as a clean log line
+        _LOGGER.error("Failed to set up WireGuard tunnel: %s", err)
+        return None
 
-    _LOGGER.info("Brought up WireGuard interface %s", interface)
-    return True, True
-
-
-async def async_teardown_wireguard(interface: str) -> None:
-    """Tear down a WireGuard interface this integration brought up."""
-    returncode, _, stderr = await _run("wg-quick", "down", interface)
-    if returncode != 0:
-        _LOGGER.warning(
-            "Failed to tear down WireGuard interface %s: %s", interface, stderr
-        )
+    return WireGuardTunnel(native_tunnel)

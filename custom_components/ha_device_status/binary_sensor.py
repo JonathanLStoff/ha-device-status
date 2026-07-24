@@ -334,7 +334,14 @@ class NetworkMonitorSensor(BinarySensorEntity):
 
 
 class PingSensor(NetworkMonitorSensor):
-    """Ping an IP address, optionally over a specific interface (e.g. WireGuard)."""
+    """Ping an IP address, or check TCP reachability over a WireGuard tunnel.
+
+    If `interface` names a WireGuard tunnel configured in this integration,
+    this does a TCP-connect check through that in-process tunnel instead of
+    a real ICMP ping - wireguard-requests has no ICMP support, only TCP.
+    Otherwise `interface` is passed straight to the system `ping` binary
+    (e.g. to bind to some other, externally-managed network interface).
+    """
 
     def __init__(
         self,
@@ -357,14 +364,21 @@ class PingSensor(NetworkMonitorSensor):
         )
         self._ip = item[CONF_IP]
         self._interface = item.get(CONF_INTERFACE)
+        self._port = item.get(CONF_PORT)
         self._count = item.get(CONF_COUNT, DEFAULT_COUNT)
         self._timeout = item.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
 
     async def async_update(self):
+        tunnel = self.hass.data.get(DOMAIN, {}).get("wireguard_tunnels", {}).get(
+            self._interface
+        )
         try:
-            success = await _async_ping(
-                self._ip, self._count, self._timeout, self._interface
-            )
+            if tunnel is not None:
+                success = await tunnel.check_tcp(self._ip, self._port, self._timeout)
+            else:
+                success = await _async_ping(
+                    self._ip, self._count, self._timeout, self._interface
+                )
             await self._set_state(success)
         except Exception as e:  # noqa: BLE001
             _LOGGER.error("Ping error for %s: %s", self._name, e)
@@ -372,7 +386,12 @@ class PingSensor(NetworkMonitorSensor):
 
 
 class PortSensor(NetworkMonitorSensor):
-    """Check if a TCP port is open."""
+    """Check if a TCP port is open, optionally over a WireGuard tunnel.
+
+    If `interface` names a WireGuard tunnel configured in this integration,
+    the connection is made through that in-process tunnel instead of
+    directly from the host.
+    """
 
     def __init__(
         self,
@@ -395,14 +414,28 @@ class PortSensor(NetworkMonitorSensor):
         )
         self._ip = item[CONF_IP]
         self._port = item[CONF_PORT]
+        self._interface = item.get(CONF_INTERFACE)
         self._timeout = item.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
 
     async def async_update(self):
+        tunnel = self.hass.data.get(DOMAIN, {}).get("wireguard_tunnels", {}).get(
+            self._interface
+        )
         try:
-            async with async_timeout.timeout(self._timeout):
-                reader, writer = await asyncio.open_connection(self._ip, self._port)
-                writer.close()
-                await writer.wait_closed()
+            if tunnel is not None:
+                online = await tunnel.check_tcp(self._ip, self._port, self._timeout)
+            elif self._interface:
+                _LOGGER.error(
+                    "Unknown WireGuard tunnel %r for %s", self._interface, self._name
+                )
+                online = False
+            else:
+                async with async_timeout.timeout(self._timeout):
+                    reader, writer = await asyncio.open_connection(
+                        self._ip, self._port
+                    )
+                    writer.close()
+                    await writer.wait_closed()
                 online = True
         except (asyncio.TimeoutError, OSError, ConnectionRefusedError):
             online = False

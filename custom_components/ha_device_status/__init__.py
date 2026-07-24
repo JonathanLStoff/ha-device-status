@@ -2,18 +2,22 @@
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_TYPE, CONF_WG_INTERFACE, CONF_WIREGUARD, DOMAIN
+from .const import CONF_NAME, CONF_TYPE, CONF_WG_INTERFACE, CONF_WIREGUARD, DOMAIN
 from .schema import CONFIG_SCHEMA  # noqa: F401 - required by Home Assistant's config validation
-from .wireguard import async_setup_wireguard, async_teardown_wireguard
+from .wireguard import async_create_wireguard_tunnel
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BINARY_SENSOR]
+
+
+def _wireguard_tunnels(hass: HomeAssistant) -> dict:
+    return hass.data.setdefault(DOMAIN, {}).setdefault("wireguard_tunnels", {})
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -26,20 +30,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     wg_config = domain_config.get(CONF_WIREGUARD)
     if wg_config:
-        wg_up, wg_managed = await async_setup_wireguard(hass, wg_config)
-        if not wg_up:
+        tunnel = await async_create_wireguard_tunnel(hass, wg_config)
+        if tunnel is None:
             _LOGGER.error(
-                "Continuing without WireGuard interface %s; ping checks "
-                "over it will fail until it's brought up",
-                wg_config[CONF_WG_INTERFACE],
+                "Continuing without WireGuard tunnel %s; ping/port checks "
+                "routed through it will fail",
+                wg_config.get(CONF_WG_INTERFACE, "(unnamed)"),
             )
-        elif wg_managed:
-            async def _teardown_wireguard(event):
-                await async_teardown_wireguard(wg_config[CONF_WG_INTERFACE])
-
-            hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STOP, _teardown_wireguard
-            )
+        else:
+            name = wg_config.get(CONF_WG_INTERFACE, "yaml")
+            _wireguard_tunnels(hass)[name] = tunnel
 
     hass.async_create_task(
         discovery.async_load_platform(hass, Platform.BINARY_SENSOR, DOMAIN, {}, config)
@@ -48,22 +48,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up a config entry: a WireGuard interface, or a monitored device."""
+    """Set up a config entry: a WireGuard tunnel, or a monitored device."""
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     if entry.data.get(CONF_TYPE) == "wireguard":
-        wg_up, wg_managed = await async_setup_wireguard(hass, entry.data)
-        if not wg_up:
+        tunnel = await async_create_wireguard_tunnel(hass, entry.data)
+        if tunnel is None:
             _LOGGER.error(
-                "Failed to bring up WireGuard interface %s for entry %s; "
-                "ping checks over it will fail until it's brought up",
-                entry.data.get(CONF_WG_INTERFACE),
+                "Failed to set up WireGuard tunnel %s; ping/port checks "
+                "routed through it will fail",
                 entry.title,
             )
             return False
-        hass.data.setdefault(DOMAIN, {}).setdefault("wireguard_managed", {})[
-            entry.entry_id
-        ] = wg_managed
+        _wireguard_tunnels(hass)[entry.data[CONF_NAME]] = tunnel
         return True
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -71,13 +68,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry: tear down a WireGuard interface, or a device."""
+    """Unload a config entry: tear down a WireGuard tunnel, or a device."""
     if entry.data.get(CONF_TYPE) == "wireguard":
-        managed = hass.data.get(DOMAIN, {}).get("wireguard_managed", {}).pop(
-            entry.entry_id, False
-        )
-        if managed:
-            await async_teardown_wireguard(entry.data[CONF_WG_INTERFACE])
+        tunnel = _wireguard_tunnels(hass).pop(entry.data[CONF_NAME], None)
+        if tunnel is not None:
+            tunnel.close()
         return True
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

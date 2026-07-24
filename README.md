@@ -9,11 +9,11 @@ Home Assistant integration that monitors devices by checking ping reachability, 
 
 This integration creates one binary sensor per device you want to monitor. Each device can be checked one of these ways:
 
-- Ping an IP address (optionally over a specific interface, such as a WireGuard tunnel)
-- Check whether a TCP port is open
+- Ping an IP address (optionally over a specific interface)
+- Check whether a TCP port is open — optionally through a WireGuard tunnel this integration manages itself
 - Subscribe to an MQTT topic and compare the payload to an expected value
 
-It can also bring up a WireGuard interface itself, so you don't have to configure the tunnel outside of Home Assistant first.
+WireGuard tunnels run **entirely in Python**, via the [wireguard-requests](https://github.com/bshuler/wireguard-requests) package (Cloudflare's boringtun + a userspace TCP/IP stack, via Rust bindings) — no system network interface, no `wireguard-tools`/`wg-quick`, no `NET_ADMIN` capability, nothing to install at the OS level. This is what makes it usable on Home Assistant OS, where installing system packages isn't possible. The tradeoff: only TCP is supported (no ICMP), so a WireGuard-routed "ping" device does a TCP-connect check rather than a real ping — see below.
 
 When a monitored device goes offline it can:
 
@@ -43,10 +43,10 @@ After installing, go to **Settings → Devices & Services → Add Integration**,
 
 1. **Name & type** — pick `ping`, `port`, `mqtt`, or `wireguard`.
 2. **Connection details**:
-   - `ping` — IP/hostname, attempt count, timeout, and an **interface** you pick from a dropdown (any WireGuard tunnel you've already added through this integration shows up as an option, the same way notify services do below — or type your own interface name if it's managed elsewhere).
-   - `port` — IP/hostname and port.
+   - `ping` — IP/hostname, attempt count, timeout, and an **interface** you pick from a dropdown (any WireGuard tunnel you've already added through this integration shows up as an option, the same way notify services do below — or type your own interface name to bind the system `ping` to some other, externally-managed interface). Picking a WireGuard tunnel switches this to a TCP-connect check, so a **port** becomes required too (WireGuard-in-Python has no ICMP support).
+   - `port` — IP/hostname and port, plus an optional **interface** to route the connection through one of your WireGuard tunnels.
    - `mqtt` — topic and expected payload.
-   - `wireguard` — see "Adding a WireGuard tunnel" below. This isn't a monitored device (no binary sensor); it exists so its interface can be selected by `ping` devices.
+   - `wireguard` — see "Adding a WireGuard tunnel" below. This isn't a monitored device (no binary sensor); it exists so it can be selected as the "interface" for `ping`/`port` devices.
 3. **Notifications & schedule** *(skipped for `wireguard`)* — pick which `notify.*` services (e.g. your phone's Home Assistant companion app) should be alerted for *this device*, whether to also notify on recovery, and the cron schedule for how often it's checked.
 
 Repeat "Add Integration" for each additional device — every device is its own entry with its own notification routing and schedule. To change a device's notify services/schedule, or a WireGuard tunnel's connection details, click **Configure** on that entry in Devices & Services.
@@ -55,14 +55,19 @@ To route notifications to a phone, install the [Home Assistant companion app](ht
 
 ### Adding a WireGuard tunnel
 
-Add a device with type `wireguard` to have the integration bring up the tunnel itself, either:
+Add a device with type `wireguard` to have the integration establish the tunnel itself — entirely in Python, no system interface, either:
 
-- **From an existing config**: set "Existing wg-quick config file path" to a `wg-quick`-style `.conf` file. Either an absolute path (e.g. `/etc/wireguard/wg0.conf`) or a path relative to your Home Assistant config directory (e.g. `wireguard/wg0.conf`, resolving to `/config/wireguard/wg0.conf`) works. The interface name is derived from the filename (e.g. `wg0.conf` → `wg0`) unless you set one explicitly.
-- **Inline**: leave the config path blank and fill in interface, address, private key, and the peer's public key + allowed IPs (endpoint, keepalive, and preshared key are optional). This models a single-peer client setup — the common case of connecting out to one VPN server.
+- **From an existing config**: set "Existing wg-quick config file path" to a `wg-quick`-style `.conf` file. Either an absolute path (e.g. `/etc/wireguard/wg0.conf`) or a path relative to your Home Assistant config directory (e.g. `wireguard/wg0.conf`, resolving to `/config/wireguard/wg0.conf`) works.
+- **Inline**: leave the config path blank and fill in address, private key, and the peer's public key, endpoint, and allowed IPs (keepalive and preshared key are optional). This models a single-peer client setup — the common case of connecting out to one VPN server.
 
-This requires `wireguard-tools` (`wg`, `wg-quick`) and `NET_ADMIN` capability on the Home Assistant host/container. If the interface already exists (managed some other way), the integration leaves it alone and won't tear it down; if it brought the interface up itself, it tears it down when that entry is removed or Home Assistant stops.
+Unlike a real `wg-quick`-managed interface, there's no OS-level name for this tunnel — it's referred to by the **device name** you gave it in the first step. Pick that name from the "interface" dropdown when adding a `ping` or `port` device to route its check through the tunnel.
 
-Once added, pick that tunnel's interface from the dropdown when adding a `ping` device.
+**Limitations, since this is a userspace TCP/IP implementation rather than a real network interface:**
+
+- **No ICMP.** A `ping` device routed through a WireGuard tunnel does a TCP-connect check instead of a real ping, so it needs a port set.
+- **Only reaches things through this tunnel.** Other integrations, and Home Assistant itself, are unaffected — this tunnel exists only for the specific devices you point at it, not systemwide.
+- **This is an early-stage dependency.** [wireguard-requests](https://github.com/bshuler/wireguard-requests) is a young, low-adoption package. If you'd rather rely on the real, upstream WireGuard implementation, terminate the tunnel outside Home Assistant (on your router, a Proxmox host, etc.) and just add the remote device as a plain `ping`/`port` device with no `interface` set — this is also the only real option on Home Assistant OS, where installing arbitrary system packages isn't possible at all.
+- **Python 3.14:** as of writing, this package has no prebuilt wheel for Python 3.14, only up to 3.13. If your Home Assistant runs Python 3.14 and your platform can't build the Rust extension from source (no Rust toolchain — true of essentially all stock Home Assistant containers/HAOS), installing this integration's requirements will fail entirely, not just the WireGuard feature. Check `python3 --version` in your Home Assistant environment before relying on this.
 
 ## Configuration via YAML (advanced / bulk setup)
 
@@ -90,10 +95,11 @@ ha_device_status:
       type: ping
       ip: 192.168.1.1
 
-    - name: "Remote NAS"         # only reachable over WireGuard
+    - name: "Remote NAS"         # only reachable over the WireGuard tunnel
       type: ping
       ip: 10.0.0.5
-      interface: wg0             # send the ping out the WireGuard interface
+      interface: wg0             # route through the tunnel named "wg0" below
+      port: 22                   # required for WireGuard-routed ping (TCP check, no ICMP)
 
     - name: "Web Server"
       type: port
@@ -115,23 +121,18 @@ ha_device_status:
 
 | Key | Scope | Description |
 | --- | --- | --- |
-| `wireguard` | top level | Optional. Have the integration bring up a WireGuard interface itself. See below. |
+| `wireguard` | top level | Optional. Have the integration establish a WireGuard tunnel itself (in-process, no system interface). See below. |
 | `cron` | top level | Cron expression for how often ping/port devices are checked. Default `*/1 * * * *` (every minute). |
 | `notify_services` | top level | List of Home Assistant companion-app notify services (e.g. `mobile_app_johns_iphone`). Find yours under **Developer Tools → Actions**. |
 | `notify_online` | top level | If `true`, also push a notification when a device comes back online. Default `false`. |
 | `notify_offline` | top level | List of item names that should trigger notifications when offline. |
-| `interface` | per ping item | Network interface to bind the ping to, e.g. `wg0` to ping a device across a WireGuard tunnel. |
+| `interface` | per ping/port item | Name of a WireGuard tunnel (the `wireguard.interface` value below) to route this check through. For `ping`, this switches to a TCP-connect check and requires `port`, since there's no ICMP support. |
 | `count` | per ping/port item | Number of attempts. Default `2`. |
 | `timeout` | per ping/port item | Per-attempt timeout in seconds. Default `3`. |
 
 **Notifying phones:** each phone with the Home Assistant companion app exposes a `notify.mobile_app_<device>` service. List those service names (without the `notify.` prefix) under `notify_services`, and list which devices should trigger alerts under `notify_offline`.
 
-**WireGuard tunnel:** the `wireguard` block will bring the interface up for you at startup, either from inline keys/peers or from an existing wg-quick config file (`config_path`). `config_path` accepts either an absolute path or one relative to your Home Assistant config directory (e.g. `wireguard/wg0.conf` resolves to `/config/wireguard/wg0.conf`). When using `config_path`, `interface` can be omitted — it's derived from the filename the same way `wg-quick` does (e.g. `wg0.conf` → interface `wg0`); set `interface` explicitly if you want to override that. This requires:
-
-- `wireguard-tools` (`wg`, `wg-quick`) installed on the Home Assistant host/container
-- `NET_ADMIN` capability available to that host/container
-
-If the interface already exists (e.g. you set it up another way), the integration leaves it alone and won't tear it down on shutdown. If it brought the interface up itself, it tears it down when Home Assistant stops. Once the tunnel is up, set `interface: wg0` (matching the `wireguard.interface` name) on any ping item that needs to reach a device across it.
+**WireGuard tunnel:** the `wireguard` block establishes the tunnel entirely in Python via [wireguard-requests](https://github.com/bshuler/wireguard-requests) — no system network interface, no `wireguard-tools`, no `NET_ADMIN`, nothing to install at the OS level. Either point at an existing wg-quick config file (`config_path`, absolute or relative to your Home Assistant config directory), or supply `private_key`/`address`/`peers` inline. `interface` here is just a label other items reference via their own `interface:` field — there's no real OS interface being named. See the top of this README for the TCP-only/no-ICMP limitation and the current Python 3.14 wheel gap for this dependency.
 
 If you use MQTT-based checks, make sure the MQTT integration is configured in Home Assistant.
 
